@@ -1,0 +1,19 @@
+{
+  "name": "apk-publisher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把 Android APK 发布到自建的内测分发站，测试人员扫码即装",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.6.0"
+  }
+}
