@@ -31,6 +31,16 @@ CLI="$HERE/lib/cli.ts"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o LogLevel=ERROR)
 SCP=(scp -i "$SSH_KEY" -o BatchMode=yes -o LogLevel=ERROR)
 
+# ── rsync 进度 flag 探测 ─────────────────────────────────────────────────────
+# --info=progress2（GNU rsync）能在传输过程中持续输出进度，且在非 TTY 下同样生效。
+# macOS 自带的是 openrsync，不支持该 flag，但 --progress 同样在非 TTY 下工作。
+# 这里探测一次，后续 APK 上传统一使用探测到的 flag，避免硬编码可能不存在的选项。
+if rsync --info=progress2 --version >/dev/null 2>&1; then
+  RSYNC_PROGRESS_FLAG="--info=progress2"
+else
+  RSYNC_PROGRESS_FLAG="--progress"
+fi
+
 die() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\033[36m▸\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
@@ -96,8 +106,14 @@ NEED_KB=$(( SIZE_BYTES / 1024 * 2 ))
 ok "可用 $((AVAIL_KB / 1024)) MB"
 
 # ── 7. 上传：先传 .part 再原子改名，避免有人下到半截文件 ─────────────────────
+# 改用 rsync 而非 scp 的原因：scp 的进度条只在 stdout 为 TTY 时才显示；
+# 当上层以管道/重定向方式调用（yarn wrapper、CI）时 scp 完全静默，
+# 而 rsync --progress / --info=progress2 在非 TTY 下同样会持续吐进度行。
+# RSYNC_PROGRESS_FLAG 已在脚本启动阶段探测设置（见上方注释）。
 step "上传 $APK_NAME"
-"${SCP[@]}" "$APK" "$SSH_HOST:$REMOTE_DIR/$APK_NAME.part"
+rsync -e "ssh -i \"$SSH_KEY\" -o BatchMode=yes -o LogLevel=ERROR" \
+  "$RSYNC_PROGRESS_FLAG" \
+  "$APK" "$SSH_HOST:$REMOTE_DIR/$APK_NAME.part"
 "${SSH[@]}" "$SSH_HOST" "mv -f '$REMOTE_DIR/$APK_NAME.part' '$REMOTE_DIR/$APK_NAME' && chmod 644 '$REMOTE_DIR/$APK_NAME'"
 ok "上传完成"
 
