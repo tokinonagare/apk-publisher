@@ -26,12 +26,14 @@ function timestamp(at: Date): string {
 }
 
 export function buildApkFileName(
+  track: string,
   label: string,
   versionName: string,
   versionCode: string,
   publishedAt: Date,
 ): string {
   const parts = [
+    sanitizeSlug(track),
     sanitizeSlug(label),
     sanitizeSlug(versionName),
     sanitizeSlug(versionCode),
@@ -55,6 +57,14 @@ export function selectStaleApks(
     .sort((a, b) => b.mtimeMs - a.mtimeMs)
     .slice(keep)
     .map((f) => f.name);
+}
+
+export function selectStaleApksForTrack(
+  files: readonly { name: string; mtimeMs: number }[],
+  track: string,
+  keep: number,
+): string[] {
+  return selectStaleApks(files.filter((file) => file.name.startsWith(`${track}-`)), keep);
 }
 
 export function formatBytes(bytes: number): string {

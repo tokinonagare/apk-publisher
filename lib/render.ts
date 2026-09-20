@@ -7,8 +7,10 @@
  */
 
 import { formatBytes } from './naming.ts';
+import { TRACKS, trackLabel, trackMutualExclusionNotice, trackPlaceholder, type Track } from './track.ts';
 
 export interface RenderInput {
+  track: Track;
   label: string;
   versionName: string;
   versionCode: string;
@@ -49,7 +51,7 @@ function row(name: string, value: string): string {
 
 export function renderPage(input: RenderInput): string {
   const {
-    label, versionName, versionCode, packageName,
+    track, label, versionName, versionCode, packageName,
     apkFileName, apkUrl, sizeBytes, builtAt, publishedAt,
     gitBranch, gitCommit, gitDirty, qrSvg,
   } = input;
@@ -63,11 +65,13 @@ export function renderPage(input: RenderInput): string {
   const dirtyBanner = gitDirty
     ? `<p class="warn">⚠️ 此包构建自含未提交改动的工作区（dirty），与任何 commit 都不完全对应</p>`
     : '';
+  const badge = trackLabel(track);
+  const mutualExclusion = trackMutualExclusionNotice(track);
 
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(label)} ${escapeHtml(versionName)} · 测试包下载</title>
+<title>${escapeHtml(badge)} · ${escapeHtml(label)} ${escapeHtml(versionName)} · 测试包下载</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -94,6 +98,7 @@ export function renderPage(input: RenderInput): string {
   }
   h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
   .version { font-size: 2rem; font-weight: 650; letter-spacing: -.02em; margin: 0 0 .1rem; }
+  .badge { display: inline-block; background: var(--accent); color: var(--accent-fg); padding: .25rem .6rem; border-radius: 999px; font-weight: 700; font-size: .8rem; margin-bottom: .65rem; }
   .code { color: var(--muted); font-size: .9rem; margin: 0 0 1.5rem; }
   .qr {
     display: flex; justify-content: center; padding: 1rem;
@@ -117,10 +122,12 @@ export function renderPage(input: RenderInput): string {
   footer { color: var(--muted); font-size: .8rem; margin-top: 1.25rem; line-height: 1.5; }
 </style>
 <div class="card">
+  <div class="badge">${escapeHtml(badge)}</div>
   <h1>${escapeHtml(label)}</h1>
   <p class="version">${escapeHtml(versionName)}</p>
   <p class="code">versionCode ${escapeHtml(versionCode)}</p>
   ${dirtyBanner}
+  ${mutualExclusion ? `<p class="warn">${escapeHtml(mutualExclusion)}</p>` : ''}
   <div class="qr">${qrSvg}</div>
   <p class="hint">用手机相机扫码安装</p>
   <a class="dl" href="./${encodeURIComponent(apkFileName)}">下载 APK · ${escapeHtml(formatBytes(sizeBytes))}</a>
@@ -136,5 +143,42 @@ export function renderPage(input: RenderInput): string {
   </footer>
 </div>
 <!-- ${escapeHtml(apkUrl)} -->
+`;
+}
+
+export function renderPlaceholderPage(track: Track): string {
+  const label = trackLabel(track);
+  return `<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(label)} · 尚未发布</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --fg:#1a1d21; --muted:#6b7280; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --fg:#e8eaed; --muted:#9aa2ad; } }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif; }
+  main { text-align:center; padding:2rem; } h1 { margin:0 0 .5rem; } p { color:var(--muted); }
+</style>
+<main><h1>${escapeHtml(label)}</h1><p>${escapeHtml(trackPlaceholder(track))}</p></main>
+`;
+}
+
+export function renderEntryPage(): string {
+  const descriptions: Record<Track, string> = {
+    dev: '给开发人员验证日常开发版本',
+    uat: '给测试人员验证 UAT 环境版本',
+    release: '给发布人员验证生产版本',
+  };
+  const links = TRACKS.map((track) => `<a class="track" href="./${track}/"><strong>${trackLabel(track)}</strong><span>${descriptions[track]}</span></a>`).join('\n');
+  return `<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unified Portal APK 下载</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#1a1d21; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --card:#171b21; --fg:#e8eaed; --muted:#9aa2ad; --line:#2a3038; --accent:#3b82f6; } }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif; }
+  main { width:min(32rem,calc(100% - 2rem)); } h1 { margin:0 0 1.5rem; } .track { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem 1.1rem; margin:.75rem 0; background:var(--card); border:1px solid var(--line); border-radius:12px; color:var(--fg); text-decoration:none; } .track strong { color:var(--accent); font-size:1.1rem; } .track span { color:var(--muted); text-align:right; font-size:.9rem; }
+</style>
+<main><h1>Unified Portal APK 下载</h1>${links}</main>
 `;
 }

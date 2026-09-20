@@ -2,8 +2,7 @@
 #
 # 把一个 Android APK 发布到自建的内测分发站（地址见 config.local.sh）
 #
-#   ./publish.sh                 # 用默认的 release APK
-#   ./publish.sh path/to/app.apk # 或指定文件
+#   ./publish.sh --track dev|uat|release [APK 路径]
 #   ./publish.sh --prune-only    # 只清理服务器上的旧包，不发布
 #
 # 服务器上没有任何常驻进程：这个脚本在本地把 index.html 连同 APK 一起生成好推上去，
@@ -28,7 +27,7 @@ DEFAULT_APK="${APK_DEFAULT_APK:-$APP_REPO/android/app/build/outputs/apk/release/
 
 NODE="node --experimental-strip-types"
 CLI="$HERE/lib/cli.ts"
-SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o LogLevel=ERROR)
+SSH=(ssh -n -i "$SSH_KEY" -o BatchMode=yes -o LogLevel=ERROR)
 SCP=(scp -i "$SSH_KEY" -o BatchMode=yes -o LogLevel=ERROR)
 
 # ── rsync 进度 flag 探测 ─────────────────────────────────────────────────────
@@ -55,11 +54,41 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 把 config.example.sh 复制成 config.local.sh 并填写，或用环境变量提供。"
 fi
 
-# ── 1. 定位 APK ─────────────────────────────────────────────────────────────
+# ── 1. 解析命令行 ────────────────────────────────────────────────────────────
 PRUNE_ONLY=false
-if [ "${1:-}" = "--prune-only" ]; then PRUNE_ONLY=true; shift; fi
+TRACK_VALUE=""
+APK=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prune-only) PRUNE_ONLY=true ;;
+    --track)
+      [ "$#" -ge 2 ] || die "缺少 --track 的值；合法值：dev、uat、release。用法：./publish.sh --track dev|uat|release [APK 路径]"
+      TRACK_VALUE="$2"
+      shift
+      ;;
+    --track=*) TRACK_VALUE="${1#*=}" ;;
+    -*) die "未知参数：$1" ;;
+    *) [ -z "$APK" ] || die "只能指定一个 APK 路径"; APK="$1" ;;
+  esac
+  shift
+done
 
-APK="${1:-$DEFAULT_APK}"
+if [ "$PRUNE_ONLY" = true ] && [ -n "$TRACK_VALUE" ]; then
+  die "--prune-only 不接受 --track；用法：./publish.sh --prune-only"
+fi
+
+if [ "$PRUNE_ONLY" = false ]; then
+  TRACK="$(printf '%s' "$TRACK_VALUE" | $NODE "$CLI" track)"
+  TRACK_DIR="$($NODE "$CLI" track-dir <<JSON
+{"remoteDir":"$REMOTE_DIR","track":"$TRACK"}
+JSON
+)"
+else
+  TRACK=""
+  TRACK_DIR=""
+fi
+
+APK="${APK:-$DEFAULT_APK}"
 [ "$PRUNE_ONLY" = true ] || [ -f "$APK" ] || die "APK 不存在: $APK
 先打包再发布，例如： (cd $APP_REPO && ./gradlew -p android assembleRelease)"
 APK="$(cd "$(dirname "$APK")" && pwd)/$(basename "$APK")"
@@ -92,10 +121,10 @@ fi
 # ── 5. 目标文件名 ───────────────────────────────────────────────────────────
 PUBLISHED_AT="$(date +%Y-%m-%dT%H:%M:%S%z)"
 APK_NAME="$($NODE "$CLI" name <<JSON
-{"label":"$APK_LABEL","versionName":"$APK_VERSION_NAME","versionCode":"$APK_VERSION_CODE","publishedAt":"$PUBLISHED_AT"}
+{"track":"$TRACK","label":"$APK_LABEL","versionName":"$APK_VERSION_NAME","versionCode":"$APK_VERSION_CODE","publishedAt":"$PUBLISHED_AT"}
 JSON
 )"
-APK_URL="$BASE_URL/$APK_NAME"
+APK_URL="$BASE_URL/$TRACK/$APK_NAME"
 
 # ── 6. 磁盘检查：留出两倍包大小的余量再传 ───────────────────────────────────
 step "检查服务器剩余空间"
@@ -110,11 +139,11 @@ ok "可用 $((AVAIL_KB / 1024)) MB"
 # 当上层以管道/重定向方式调用（yarn wrapper、CI）时 scp 完全静默，
 # 而 rsync --progress / --info=progress2 在非 TTY 下同样会持续吐进度行。
 # RSYNC_PROGRESS_FLAG 已在脚本启动阶段探测设置（见上方注释）。
-step "上传 $APK_NAME"
+step "上传 $TRACK/$APK_NAME"
 rsync -e "ssh -i \"$SSH_KEY\" -o BatchMode=yes -o LogLevel=ERROR" \
   "$RSYNC_PROGRESS_FLAG" \
-  "$APK" "$SSH_HOST:$REMOTE_DIR/$APK_NAME.part"
-"${SSH[@]}" "$SSH_HOST" "mv -f '$REMOTE_DIR/$APK_NAME.part' '$REMOTE_DIR/$APK_NAME' && chmod 644 '$REMOTE_DIR/$APK_NAME'"
+  "$APK" "$SSH_HOST:$TRACK_DIR/$APK_NAME.part"
+"${SSH[@]}" "$SSH_HOST" "mv -f '$TRACK_DIR/$APK_NAME.part' '$TRACK_DIR/$APK_NAME' && chmod 644 '$TRACK_DIR/$APK_NAME'"
 ok "上传完成"
 
 # ── 8. 生成并上传下载页 ─────────────────────────────────────────────────────
@@ -123,6 +152,7 @@ PAGE="$(mktemp -t apk-index)"
 trap 'rm -f "$PAGE"' EXIT
 $NODE "$CLI" render >"$PAGE" <<JSON
 {
+  "track": "$TRACK",
   "label": $($NODE -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$APK_LABEL"),
   "versionName": "$APK_VERSION_NAME",
   "versionCode": "$APK_VERSION_CODE",
@@ -137,8 +167,8 @@ $NODE "$CLI" render >"$PAGE" <<JSON
   "gitDirty": $GIT_DIRTY
 }
 JSON
-"${SCP[@]}" "$PAGE" "$SSH_HOST:$REMOTE_DIR/index.html.part"
-"${SSH[@]}" "$SSH_HOST" "mv -f '$REMOTE_DIR/index.html.part' '$REMOTE_DIR/index.html' && chmod 644 '$REMOTE_DIR/index.html'"
+"${SCP[@]}" "$PAGE" "$SSH_HOST:$TRACK_DIR/index.html.part"
+"${SSH[@]}" "$SSH_HOST" "mv -f '$TRACK_DIR/index.html.part' '$TRACK_DIR/index.html' && chmod 644 '$TRACK_DIR/index.html'"
 
 # SELinux 是 Enforcing：新文件若标签不对，nginx 读不到，会表现成 404 而不是 403。
 "${SSH[@]}" "$SSH_HOST" "sudo restorecon -R '$REMOTE_DIR'" || die "restorecon 失败，页面可能返回 404"
@@ -146,23 +176,25 @@ ok "下载页已更新"
 }
 
 # ── 清理：服务器上只留最近 $KEEP 个包 ───────────────────────────────────────
-prune_old() {
-step "清理旧版本（保留最近 $KEEP 个）"
+prune_track() {
+local track="$1"
+local dir="$REMOTE_DIR/$track"
+step "清理 $track 档旧版本（保留最近 $KEEP 个）"
 FILES_JSON="$("${SSH[@]}" "$SSH_HOST" \
-  "find '$REMOTE_DIR' -maxdepth 1 -name '*.apk' -printf '%f\t%T@\n'" \
+  "find '$dir' -maxdepth 1 -name '*.apk' -printf '%f\t%T@\n'" \
   | $NODE -e '
     const rows = require("node:fs").readFileSync(0, "utf8").trim().split("\n").filter(Boolean);
     const files = rows.map((r) => {
       const [name, t] = r.split("\t");
       return { name, mtimeMs: Math.round(parseFloat(t) * 1000) };
     });
-    console.log(JSON.stringify({ files, keep: Number(process.argv[1]) }));
-  ' "$KEEP")"
+    console.log(JSON.stringify({ files, keep: Number(process.argv[1]), track: process.argv[2] }));
+  ' "$KEEP" "$track")"
 STALE="$(printf '%s' "$FILES_JSON" | $NODE "$CLI" stale)"
 if [ -n "$STALE" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    "${SSH[@]}" "$SSH_HOST" "rm -f '$REMOTE_DIR/$f'"
+    "${SSH[@]}" "$SSH_HOST" "rm -f '$dir/$f'"
     printf '  删除 %s\n' "$f"
   done <<<"$STALE"
 else
@@ -170,12 +202,37 @@ else
 fi
 }
 
+prune_old() {
+  while IFS= read -r track; do prune_track "$track"; done < <($NODE "$CLI" tracks)
+}
+
+ensure_site_structure() {
+  step "确保三档目录与入口页存在"
+  "${SSH[@]}" "$SSH_HOST" "mkdir -p '$REMOTE_DIR/dev' '$REMOTE_DIR/uat' '$REMOTE_DIR/release'"
+  while IFS= read -r track; do
+    local placeholder
+    placeholder="$(mktemp -t apk-placeholder)"
+    printf '%s' "$track" | $NODE "$CLI" render-placeholder >"$placeholder"
+    "${SCP[@]}" "$placeholder" "$SSH_HOST:$REMOTE_DIR/$track/index.html.part"
+    "${SSH[@]}" "$SSH_HOST" "if [ ! -f '$REMOTE_DIR/$track/index.html' ]; then mv '$REMOTE_DIR/$track/index.html.part' '$REMOTE_DIR/$track/index.html' && chmod 644 '$REMOTE_DIR/$track/index.html'; else rm -f '$REMOTE_DIR/$track/index.html.part'; fi"
+    rm -f "$placeholder"
+  done < <($NODE "$CLI" tracks)
+  ENTRY="$(mktemp -t apk-entry)"
+  $NODE "$CLI" render-entry >"$ENTRY"
+  "${SCP[@]}" "$ENTRY" "$SSH_HOST:$REMOTE_DIR/index.html.part"
+  "${SSH[@]}" "$SSH_HOST" "mv -f '$REMOTE_DIR/index.html.part' '$REMOTE_DIR/index.html' && chmod 644 '$REMOTE_DIR/index.html'"
+  rm -f "$ENTRY"
+}
+
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 # 中断的上传会留下 .part 残骸。它们不匹配 *.apk，永远轮不到 prune_old 清理，
 # 会一直占着盘——这台机器就是被这类没人回收的东西写满过一次的。
 # 只删一小时前的，避免误伤另一个正在进行的上传。
-step "清理中断残留"
-"${SSH[@]}" "$SSH_HOST" "find '$REMOTE_DIR' -maxdepth 1 -name '*.part' -mmin +60 -delete" || true
+step "清理三档目录中的中断残留"
+TRACK_DIRS="$(while IFS= read -r track; do printf "'$REMOTE_DIR/%s' " "$track"; done < <($NODE "$CLI" tracks))"
+"${SSH[@]}" "$SSH_HOST" "find $TRACK_DIRS -maxdepth 1 -name '*.part' -mmin +60 -delete" || true
+
+ensure_site_structure
 
 if [ "$PRUNE_ONLY" = false ]; then
   publish_release
@@ -186,6 +243,6 @@ prune_old
 if [ "$PRUNE_ONLY" = false ]; then
   echo
   $NODE "$CLI" qr-terminal "$APK_URL"
-  printf '\033[1m下载页\033[0m  %s\n' "$BASE_URL"
+  printf '\033[1m下载页\033[0m  %s/%s/\n' "$BASE_URL" "$TRACK"
   printf '\033[1m直链  \033[0m  %s\n' "$APK_URL"
 fi

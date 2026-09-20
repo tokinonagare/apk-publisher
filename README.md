@@ -6,27 +6,26 @@
 nginx 直接当静态文件发。没有数据库、没有后端服务、没有需要维护的容器。
 
 ```
-./publish.sh
+./publish.sh --track dev|uat|release [APK 路径]
 ```
 
 ```
-▸ 清理中断残留
+▸ 清理三档目录中的中断残留
 ▸ 读取 APK 元信息
 ✓ unified-portal-app 1.0.0 (versionCode 1) · 107 MB
 ✓ 构建来源 main @ 7c8d976
 ▸ 检查服务器剩余空间
 ✓ 可用 56136 MB
-▸ 上传 unified-portal-app-1.0.0-1-20260901-1149.apk
+▸ 上传 dev/dev-unified-portal-app-1.0.0-1-20260901-1149.apk
 ✓ 上传完成
 ▸ 生成下载页
 ✓ 下载页已更新
-▸ 清理旧版本（保留最近 3 个）
-  删除 unified-portal-app-1.0.0-1-20260901-1141.apk
+▸ 清理 dev 档旧版本（按 APK_KEEP 保留）
 
   <终端里直接可扫的二维码>
 
-下载页  https://apk.example.com
-直链    https://apk.example.com/unified-portal-app-1.0.0-1-20260901-1149.apk
+下载页  https://apk.example.com/dev/
+直链    https://apk.example.com/dev/dev-unified-portal-app-1.0.0-1-20260901-1149.apk
 ```
 
 ## 快速开始
@@ -34,10 +33,25 @@ nginx 直接当静态文件发。没有数据库、没有后端服务、没有�
 ```bash
 npm install
 cp config.example.sh config.local.sh   # 填上服务器地址、密钥路径、域名
-./publish.sh                            # 发布默认的 release APK
-./publish.sh path/to/app.apk            # 或指定一个
-./publish.sh --prune-only               # 只清理服务器上的旧包，不发布
+./publish.sh --track dev                # 发布 Dev 档默认 APK
+./publish.sh --track uat path/to/app.apk
+./publish.sh --track=release path/to/app.apk
+./publish.sh --prune-only               # 清理三档，各自按 APK_KEEP 保留
 ```
+
+`--track` 是必填项，只接受 `dev`、`uat`、`release`；缺少或传入其它值会以非零退出并报错，发布器不会从 APK、环境变量或应用名推断档位。`--prune-only` 不接受 `--track`。
+
+三档页面和 APK 相互隔离：
+
+```
+<REMOTE_DIR>/
+  index.html
+  dev/index.html       dev/dev-*.apk
+  uat/index.html       uat/uat-*.apk
+  release/index.html   release/release-*.apk
+```
+
+根入口页列出 `Dev`、`UAT`、`Release` 三个入口；尚未发布的档位显示占位页。每档独立生成页面与文件名，`APK_KEEP`（默认 3）按档分别保留，清理一个档位不会删除其它档位的 APK。UAT 与 Release 使用相同 applicationId，页面会提示切换前卸载；Dev 可以与它们并存。
 
 `config.local.sh` 已 gitignore。也可以改用同名的 `APK_*` 环境变量，环境变量优先。
 
@@ -62,7 +76,7 @@ cp config.example.sh config.local.sh   # 填上服务器地址、密钥路径、
 它们不匹配 `*.apk`，光靠版本保留策略永远轮不到它们。
 
 **缓存串包。** nginx 对 `.apk` 发 `immutable` 长缓存，所以文件名必须每次发布都不同，
-否则已经缓存过的人会永远拿到旧包。文件名里因此带发布时间戳，而不只是版本号。
+否则已经缓存过的人会永远拿到旧包。文件名里因此带发布时间戳和档位前缀，而不只是版本号。
 
 **SELinux。** 见下。
 
@@ -99,7 +113,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 开发
 
 ```bash
-npm test        # node:test，22 个用例
+npm test        # node:test
 npm run typecheck
 ```
 

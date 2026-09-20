@@ -1,14 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPage, escapeHtml, type RenderInput } from '../lib/render.ts';
+import { renderEntryPage, renderPage, renderPlaceholderPage, escapeHtml, type RenderInput } from '../lib/render.ts';
 
 const BASE: RenderInput = {
+  track: 'dev',
   label: 'unified-portal-app',
   versionName: '1.0.0',
   versionCode: '1',
   packageName: 'com.anonymous.unifiedportalapp',
-  apkFileName: 'unified-portal-app-1.0.0-1-20260901-1130.apk',
-  apkUrl: 'https://apk.example.com/unified-portal-app-1.0.0-1-20260901-1130.apk',
+  apkFileName: 'dev-unified-portal-app-1.0.0-1-20260901-1130.apk',
+  apkUrl: 'https://apk.example.com/dev/dev-unified-portal-app-1.0.0-1-20260901-1130.apk',
   sizeBytes: 112 * 1024 * 1024,
   builtAt: new Date('2026-08-20T02:41:12+08:00'),
   publishedAt: new Date('2026-09-01T11:30:00+08:00'),
@@ -23,7 +24,16 @@ test('页面含版本号、versionCode、包名与下载链接', () => {
   assert.match(html, /1\.0\.0/);
   assert.match(html, /versionCode\s*1/);
   assert.match(html, /com\.anonymous\.unifiedportalapp/);
-  assert.match(html, /unified-portal-app-1\.0\.0-1-20260901-1130\.apk/);
+  assert.match(html, /dev-unified-portal-app-1\.0\.0-1-20260901-1130\.apk/);
+});
+
+test('页面显著显示档名，UAT 与 Release 显示互斥提示，Dev 不显示', () => {
+  assert.match(renderPage(BASE), />Dev</);
+  assert.ok(!renderPage(BASE).includes('同一台设备不能同时安装'));
+  assert.match(renderPage({ ...BASE, track: 'uat' }), />UAT</);
+  assert.match(renderPage({ ...BASE, track: 'uat' }), /同一台设备不能同时安装/);
+  assert.match(renderPage({ ...BASE, track: 'release' }), />Release</);
+  assert.match(renderPage({ ...BASE, track: 'release' }), /同一台设备不能同时安装/);
 });
 
 test('二维码 SVG 被内联进页面，没有外部脚本或 CDN 依赖', () => {
@@ -67,4 +77,15 @@ test('页面声明 utf-8 与移动端 viewport', () => {
   const html = renderPage(BASE);
   assert.match(html, /charset=["']?utf-8/i);
   assert.match(html, /name=["']viewport["']/i);
+});
+
+test('入口页列出三个英文档名与中文说明', () => {
+  const html = renderEntryPage();
+  for (const track of ['Dev', 'UAT', 'Release']) assert.match(html, new RegExp(track));
+  assert.match(html, /开发人员|测试人员|发布人员/);
+});
+
+test('占位页明确提示尚未发布', () => {
+  assert.match(renderPlaceholderPage('release'), /Release/);
+  assert.match(renderPlaceholderPage('release'), /尚未发布/);
 });

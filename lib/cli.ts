@@ -8,8 +8,9 @@
 import { readFileSync } from 'node:fs';
 import QRCode from 'qrcode';
 import { parseBadging } from './apk-info.ts';
-import { buildApkFileName, selectStaleApks } from './naming.ts';
-import { renderPage, type RenderInput } from './render.ts';
+import { buildApkFileName, selectStaleApksForTrack } from './naming.ts';
+import { renderEntryPage, renderPage, renderPlaceholderPage, type RenderInput } from './render.ts';
+import { parseTrack, trackDirectory, TRACKS } from './track.ts';
 
 function readStdin(): string {
   return readFileSync(0, 'utf8');
@@ -61,19 +62,45 @@ async function main(): Promise<void> {
       return;
     }
 
+    case 'render-entry': {
+      process.stdout.write(renderEntryPage());
+      return;
+    }
+
+    case 'render-placeholder': {
+      process.stdout.write(renderPlaceholderPage(parseTrack(readStdin().trim())));
+      return;
+    }
+
+    case 'track': {
+      process.stdout.write(parseTrack(readStdin().trim()) + '\n');
+      return;
+    }
+
+    case 'tracks': {
+      process.stdout.write(TRACKS.join('\n') + '\n');
+      return;
+    }
+
+    case 'track-dir': {
+      const r = JSON.parse(readStdin());
+      process.stdout.write(trackDirectory(r.remoteDir, parseTrack(r.track)) + '\n');
+      return;
+    }
+
     // {label,versionName,versionCode,publishedAt} -> 目标文件名
     case 'name': {
       const r = JSON.parse(readStdin());
       process.stdout.write(
-        buildApkFileName(r.label, r.versionName, r.versionCode, new Date(r.publishedAt)) + '\n',
+        buildApkFileName(parseTrack(r.track), r.label, r.versionName, r.versionCode, new Date(r.publishedAt)) + '\n',
       );
       return;
     }
 
     // {files:[{name,mtimeMs}], keep} -> 该删的文件名，每行一个
     case 'stale': {
-      const { files, keep } = JSON.parse(readStdin());
-      const stale = selectStaleApks(files, keep);
+      const { files, keep, track } = JSON.parse(readStdin());
+      const stale = selectStaleApksForTrack(files, track, keep);
       if (stale.length > 0) process.stdout.write(stale.join('\n') + '\n');
       return;
     }
