@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderEntryPage, renderPage, renderPlaceholderPage, escapeHtml, type RenderInput } from '../lib/render.ts';
+import { trackMutualExclusionNotice } from '../lib/track.ts';
 
 const BASE: RenderInput = {
   track: 'dev',
@@ -29,7 +30,8 @@ test('页面含版本号、versionCode、包名与下载链接', () => {
 
 test('页面显著显示档名，UAT 与 Release 显示互斥提示，Dev 不显示', () => {
   assert.match(renderPage(BASE), />Dev</);
-  assert.ok(!renderPage(BASE).includes('同一台设备不能同时安装'));
+  assert.equal(trackMutualExclusionNotice('dev'), '');
+  assert.ok(!renderPage(BASE).includes('<p class="warn">'));
   assert.match(renderPage({ ...BASE, track: 'uat' }), />UAT</);
   assert.match(renderPage({ ...BASE, track: 'uat' }), /同一台设备不能同时安装/);
   assert.match(renderPage({ ...BASE, track: 'release' }), />Release</);

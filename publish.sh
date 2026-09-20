@@ -214,6 +214,8 @@ ensure_site_structure() {
     placeholder="$(mktemp -t apk-placeholder)"
     printf '%s' "$track" | $NODE "$CLI" render-placeholder >"$placeholder"
     "${SCP[@]}" "$placeholder" "$SSH_HOST:$REMOTE_DIR/$track/index.html.part"
+    # 这里有意在远端原子完成 test -f 与 mv，避免把判断拉回本地后引入 TOCTOU 窗口。
+    # 该行为没有自动化守卫；修改时必须手工验证已有真页面不会被占位页覆盖。
     "${SSH[@]}" "$SSH_HOST" "if [ ! -f '$REMOTE_DIR/$track/index.html' ]; then mv '$REMOTE_DIR/$track/index.html.part' '$REMOTE_DIR/$track/index.html' && chmod 644 '$REMOTE_DIR/$track/index.html'; else rm -f '$REMOTE_DIR/$track/index.html.part'; fi"
     rm -f "$placeholder"
   done < <($NODE "$CLI" tracks)
