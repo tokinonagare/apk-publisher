@@ -9,6 +9,12 @@ nginx 直接当静态文件发。没有数据库、没有后端服务、没有�
 ./publish.sh --track dev|uat|release [APK 路径]
 ```
 
+**端到端发版**（构建 + 发布一条命令走完）：
+
+```
+./release.sh --track dev|uat|release [--version 1.0.9] [--dry-run]
+```
+
 ```
 ▸ 清理三档目录中的中断残留
 ▸ 读取 APK 元信息
@@ -27,6 +33,36 @@ nginx 直接当静态文件发。没有数据库、没有后端服务、没有�
 下载页  https://apk.example.com/dev/
 直链    https://apk.example.com/dev/dev-unified-portal-app-1.0.0-1-20260901-1149.apk
 ```
+
+## release.sh（端到端发版）
+
+`publish.sh` 只管「把一个已构建好的 APK 发到分发站」。`release.sh` 在它前面
+把构建那半也接上，一条命令走完全程：
+
+```
+./release.sh --track dev              # Dev 档完整发版
+./release.sh --track uat --dry-run    # 只打印计划，不改任何东西
+./release.sh --track release --version 1.0.9
+```
+
+七步，顺序固定：
+
+1. 在 app 仓**当前分支**跑 `git pull --rebase`（不切分支）
+2. 检查 `app.config.ts` 必须干净，否则硬失败；其余文件允许 dirty
+3. `android.versionCode` +1；传了 `--version` 就同时改顶层 `version`
+4. 只提交 `app.config.ts` 这一个文件（**不 push**）
+5. 按 track 设 `APP_VARIANT` 跑 `npx expo prebuild --platform android`
+   （只有 `dev` 设 `APP_VARIANT=development`，`uat`/`release` 不设，走缺省交付包名）
+6. 在 `android/` 下跑 `./gradlew assembleRelease`
+7. 调 `./publish.sh --track <同一个档> <刚构建出的 apk>`
+
+`--track` 必须显式传（`dev`、`uat`、`release`），同时支持 `--track=dev` 写法。
+`--dry-run` 打印将要执行的每一步与关键值，不改文件、不提交、不构建、不上传。
+
+> **副作用说明：** `release.sh` 会改 app 仓（`app.config.ts` 的版本号）并产生
+> **一个本地 commit，但绝不 push**。`app.config.ts` 有未提交改动时会直接硬失败，
+> 避免把半成品改动混进版本提交里。`android/` 是 gitignored 的构建产物，
+> prebuild 会清空重建，这是预期的。
 
 ## 快速开始
 
@@ -122,6 +158,8 @@ npm run typecheck
 | 文件 | 职责 |
 |---|---|
 | `publish.sh` | 编排：定位 APK、读 git 信息、上传、清理 |
+| `release.sh` | 编排：改版本号、提交（不 push）、prebuild、构建、调 publish.sh |
+| `lib/release.ts` | release.sh 的纯函数：档位映射、版本号读写与改写、参数解析 |
 | `lib/apk-info.ts` | 解析 `aapt2 dump badging` 输出 |
 | `lib/naming.ts` | 文件命名与保留策略 |
 | `lib/render.ts` | 生成下载页 HTML |

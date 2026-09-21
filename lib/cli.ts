@@ -11,6 +11,13 @@ import { parseBadging } from './apk-info.ts';
 import { buildApkFileName, selectStaleApksForTrack } from './naming.ts';
 import { renderEntryPage, renderPage, renderPlaceholderPage, type RenderInput } from './render.ts';
 import { parseTrack, trackDirectory, TRACKS } from './track.ts';
+import {
+  appVariantForTrack,
+  bumpConfigText,
+  parseReleaseArgs,
+  readConfigVersions,
+  releaseCommitMessage,
+} from './release.ts';
 
 function readStdin(): string {
   return readFileSync(0, 'utf8');
@@ -110,6 +117,40 @@ async function main(): Promise<void> {
       const url = process.argv[3];
       if (!url) throw new Error('qr-terminal 需要一个 URL 参数');
       process.stdout.write(await QRCode.toString(url, { type: 'terminal', small: true }));
+      return;
+    }
+
+    // ── release.sh 侧助手 ──
+    // track -> APP_VARIANT。uat/release 不设，输出空行。
+    case 'app-variant': {
+      const variant = appVariantForTrack(parseTrack(readStdin().trim()));
+      process.stdout.write((variant ?? '') + '\n');
+      return;
+    }
+
+    // app.config.ts 全文 -> {"version","versionCode"} JSON
+    case 'config-versions': {
+      process.stdout.write(JSON.stringify(readConfigVersions(readStdin())) + '\n');
+      return;
+    }
+
+    // {source,versionCode,version?} -> 改写后的 app.config.ts 全文
+    case 'bump-config': {
+      const r = JSON.parse(readStdin());
+      process.stdout.write(bumpConfigText(r.source, { versionCode: r.versionCode, version: r.version }));
+      return;
+    }
+
+    // ["--track","dev","--dry-run"] -> {track,version?,dryRun} JSON
+    case 'release-args': {
+      process.stdout.write(JSON.stringify(parseReleaseArgs(JSON.parse(readStdin()))) + '\n');
+      return;
+    }
+
+    // {track,oldVersion,newVersion,oldVersionCode,newVersionCode} -> 中文 commit message
+    case 'release-commit-message': {
+      const r = JSON.parse(readStdin());
+      process.stdout.write(releaseCommitMessage(r) + '\n');
       return;
     }
 
