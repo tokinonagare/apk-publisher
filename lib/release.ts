@@ -27,12 +27,12 @@ export function appVariantForTrack(track: Track): string | undefined {
   return undefined;
 }
 
-/** 从 app.config.ts 源码文本里读出 android 块内的 versionCode。锚定在 android: 块内匹配，不硬编码行号。 */
+/** 从 app.config.ts 源码文本里读出 android 块内的 versionCode。锚定在 android: 块内匹配，不硬编码行号。行首只允许空白（多行模式）——注释里的 versionCode: 数字不能被读出来。 */
 export function readVersionCode(source: string): number {
   const androidIndex = source.indexOf('android:');
   if (androidIndex === -1) throw new Error('app.config.ts 里找不到 android: 块，无法读取 versionCode');
   const after = source.slice(androidIndex);
-  const match = after.match(/versionCode\s*:\s*(\d+)/);
+  const match = after.match(/^[ \t]*versionCode\s*:\s*(\d+)/m);
   if (!match) throw new Error('app.config.ts 的 android 块里找不到 versionCode，无法读取');
   return Number(match[1]);
 }
@@ -61,9 +61,9 @@ export function withVersionCode(source: string, next: number): string {
   if (androidIndex === -1) throw new Error('app.config.ts 里找不到 android: 块，无法改写 versionCode');
   const head = source.slice(0, androidIndex);
   const tail = source.slice(androidIndex);
-  const match = tail.match(/versionCode\s*:\s*\d+/);
+  const match = tail.match(/^([ \t]*)versionCode\s*:\s*\d+/m);
   if (!match || match.index === undefined) throw new Error('app.config.ts 的 android 块里找不到 versionCode，无法改写');
-  return head + tail.slice(0, match.index) + `versionCode: ${next}` + tail.slice(match.index + match[0].length);
+  return head + tail.slice(0, match.index) + `${match[1]}versionCode: ${next}` + tail.slice(match.index + match[0].length);
 }
 
 /** 产出改写后的 app.config.ts 文本：只换 android 块之前的顶层 version，其余不动。 */
@@ -150,27 +150,4 @@ export function releaseCommitMessage(input: {
     `发版（${input.track}）：versionCode ${input.oldVersionCode} → ${input.newVersionCode}，` +
     `${versionPart}`
   );
-}
-
-/** --dry-run 打印的计划行：只做字符串拼接，不读任何外部状态。 */
-export function formatDryRunPlan(input: {
-  track: Track;
-  appVariant: string | undefined;
-  oldVersion: string;
-  newVersion: string;
-  oldVersionCode: number;
-  newVersionCode: number;
-}): string[] {
-  const variant = input.appVariant === undefined ? '（不设，走缺省交付包名）' : input.appVariant;
-  return [
-    `track: ${input.track}`,
-    `APP_VARIANT: ${variant}`,
-    `version: ${input.oldVersion} → ${input.newVersion}`,
-    `versionCode: ${input.oldVersionCode} → ${input.newVersionCode}`,
-    '步骤：git pull --rebase → 检查 app.config.ts 干净 → 改版本号 → 只提交 app.config.ts（不 push）',
-    `步骤：APP_VARIANT=${input.appVariant ?? ''} npx expo prebuild --platform android`.replace('APP_VARIANT= ', ''),
-    '步骤：./gradlew assembleRelease（cwd: <APP_REPO>/android）',
-    `步骤：./publish.sh --track ${input.track} <刚构建出的 apk>`,
-    'dry-run：以上步骤均未执行，app 仓未被修改。',
-  ];
 }

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   appVariantForTrack,
   bumpConfigText,
-  formatDryRunPlan,
   parseReleaseArgs,
   readConfigVersions,
   readVersionCode,
@@ -41,6 +40,19 @@ test('从源码文本读出 versionCode 与 version（注释里的干扰值不�
   assert.equal(readVersionCode(SAMPLE), 9);
   assert.equal(readVersionName(SAMPLE), '1.0.8');
   assert.deepEqual(readConfigVersions(SAMPLE), { version: '1.0.8', versionCode: 9 });
+});
+
+test('注释里带冒号的 versionCode 不能被读出来或改写（行首锚定）', () => {
+  const src = `android: {
+    // 上一版 versionCode: 888，已弃用
+    versionCode: 9,
+  },
+`;
+  assert.equal(readVersionCode(src), 9);
+  const out = withVersionCode(src, 10);
+  assert.match(out, /\/\/ 上一版 versionCode: 888，已弃用/);
+  assert.match(out, /^[ \t]*versionCode: 10,/m);
+  assert.equal(readVersionCode(out), 10);
 });
 
 test('改写 versionCode 只动 android 块内那一处', () => {
@@ -96,16 +108,4 @@ test('commit message 是中文且写清版本号变化', () => {
     track: 'dev', oldVersion: '1.0.8', newVersion: '1.0.9', oldVersionCode: 9, newVersionCode: 10,
   });
   assert.match(msg2, /version 1\.0\.8 → 1\.0\.9/);
-});
-
-test('dry-run 计划行含关键值', () => {
-  const lines = formatDryRunPlan({
-    track: 'dev', appVariant: 'development',
-    oldVersion: '1.0.8', newVersion: '1.0.8', oldVersionCode: 9, newVersionCode: 10,
-  });
-  const text = lines.join('\n');
-  assert.match(text, /track: dev/);
-  assert.match(text, /APP_VARIANT: development/);
-  assert.match(text, /versionCode: 9 → 10/);
-  assert.match(text, /publish\.sh --track dev/);
 });

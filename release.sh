@@ -82,6 +82,11 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ── 3–4. 改写 app.config.ts → 读回验证 → 只提交这一个文件（不 push） ──────────
+# 并发说明（乐观策略，🚫 不是并发安全）：
+# 这里唯一的并发保护是开头那次 dirty 检查。pull 之后到 commit 之间如果有外部会话
+# 改了 app.config.ts，脚本察觉不到（分析所得，未实测复现）。正常情况下只有这个脚本
+# 会改这个文件；若多人同时在 app 仓操作，发版前请先口头对齐。
+# 中断恢复不做自动回滚：文件里的改动未必只有脚本写的那一行，自动回滚可能吞掉别人的改动。
 step "改版本号：versionCode $OLD_CODE → $NEW_CODE$([ "$NEW_VERSION" != "$OLD_VERSION" ] && echo "，version $OLD_VERSION → $NEW_VERSION")"
 BUMP_VERSION=""
 if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then BUMP_VERSION="$NEW_VERSION"; fi
@@ -98,8 +103,12 @@ mv "$APP_REPO/$CONFIG_FILE.new" "$APP_REPO/$CONFIG_FILE"
 VERIFY_JSON="$($NODE "$CLI" config-versions <"$APP_REPO/$CONFIG_FILE")"
 GOT_VERSION="$($NODE -e 'console.log(JSON.parse(process.argv[1]).version)' "$VERIFY_JSON")"
 GOT_CODE="$($NODE -e 'console.log(JSON.parse(process.argv[1]).versionCode)' "$VERIFY_JSON")"
-[ "$GOT_CODE" = "$NEW_CODE" ] || die "改写后读回 versionCode 是 ${GOT_CODE}，期望 ${NEW_CODE}，已停止（文件已改、尚未提交，请手工检查）"
-[ "$GOT_VERSION" = "$NEW_VERSION" ] || die "改写后读回 version 是 ${GOT_VERSION}，期望 ${NEW_VERSION}，已停止（文件已改、尚未提交，请手工检查）"
+[ "$GOT_CODE" = "$NEW_CODE" ] || die "改写后读回 versionCode 是 ${GOT_CODE}，期望 ${NEW_CODE}。文件已改、尚未提交，已停止。
+回到干净状态：先用 git -C \"${APP_REPO}\" diff 确认只有版本号这一处改动，然后粘贴执行——
+node -e 'const fs=require(\"node:fs\");console.log(JSON.stringify({source:fs.readFileSync(\"${APP_REPO}/${CONFIG_FILE}\",\"utf8\"),versionCode:${OLD_CODE},version:\"${OLD_VERSION}\"}))' | node --experimental-strip-types \"${CLI}\" bump-config > \"${APP_REPO}/${CONFIG_FILE}.tmp\" && mv \"${APP_REPO}/${CONFIG_FILE}.tmp\" \"${APP_REPO}/${CONFIG_FILE}\" && git -C \"${APP_REPO}\" diff --stat"
+[ "$GOT_VERSION" = "$NEW_VERSION" ] || die "改写后读回 version 是 ${GOT_VERSION}，期望 ${NEW_VERSION}。文件已改、尚未提交，已停止。
+回到干净状态：先用 git -C \"${APP_REPO}\" diff 确认只有版本号这一处改动，然后粘贴执行——
+node -e 'const fs=require(\"node:fs\");console.log(JSON.stringify({source:fs.readFileSync(\"${APP_REPO}/${CONFIG_FILE}\",\"utf8\"),versionCode:${OLD_CODE},version:\"${OLD_VERSION}\"}))' | node --experimental-strip-types \"${CLI}\" bump-config > \"${APP_REPO}/${CONFIG_FILE}.tmp\" && mv \"${APP_REPO}/${CONFIG_FILE}.tmp\" \"${APP_REPO}/${CONFIG_FILE}\" && git -C \"${APP_REPO}\" diff --stat"
 ok "已改写并验证：version ${GOT_VERSION}，versionCode ${GOT_CODE}"
 
 COMMIT_JSON="$($NODE -e 'console.log(JSON.stringify({ track: process.argv[1], oldVersion: process.argv[2], newVersion: process.argv[3], oldVersionCode: Number(process.argv[4]), newVersionCode: Number(process.argv[5]) }))' "$TRACK" "$OLD_VERSION" "$NEW_VERSION" "$OLD_CODE" "$NEW_CODE")"
