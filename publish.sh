@@ -2,11 +2,18 @@
 #
 # 把一个 Android APK 发布到自建的内测分发站（地址见 config.local.sh）
 #
-#   ./publish.sh --track dev|uat|release [APK 路径]
+#   ./publish.sh --track dev|uat|release [--app adaa|uaeaa] [APK 路径]
 #   ./publish.sh --prune-only    # 只清理服务器上的旧包，不发布
 #
 # 服务器上没有任何常驻进程：这个脚本在本地把 index.html 连同 APK 一起生成好推上去，
 # nginx 直接当静态文件发。
+#
+# 档位（dev/uat/release）与应用（adaa/uaeaa）是两条正交的轴，一个「槽位」= 一个应用
+# 在一个档位下的位置。缺省应用 adaa 住在 `<track>/`（已流传出去的直链不能断），
+# 其余应用各占一层子目录：
+#
+#   dev/index.html   dev/dev-*.apk            ← ADAA（一页两组二维码）
+#                    dev/uaeaa/dev-*.apk      ← UAEAA（同一个 index.html 里的第二组）
 set -euo pipefail
 
 # ── 配置 ────────────────────────────────────────────────────────────────────
@@ -22,7 +29,9 @@ SSH_HOST="${APK_SSH_HOST:-}"
 BASE_URL="${APK_BASE_URL:-}"
 APP_REPO="${APK_APP_REPO:-}"
 REMOTE_DIR="${APK_REMOTE_DIR:-/var/www/apk-publisher}"
-KEEP="${APK_KEEP:-3}"                       # 服务器上保留多少个历史包
+REMOTE_DIR="${REMOTE_DIR%/}"                # 末尾斜杠会让后面的路径拼接出现 //
+KEEP="${APK_KEEP:-3}"                       # 每个槽位（应用 × 档位）保留多少个历史包
+# 只适用于缺省应用（adaa）。非缺省应用必须显式传 APK 路径，见下方那道守卫。
 DEFAULT_APK="${APK_DEFAULT_APK:-$APP_REPO/android/app/build/outputs/apk/release/app-release.apk}"
 
 NODE="node --experimental-strip-types"
@@ -54,19 +63,31 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 把 config.example.sh 复制成 config.local.sh 并填写，或用环境变量提供。"
 fi
 
+# ── 槽位清单（档位 × 应用）：目录规则只在 lib/app.ts 里写一次 ──────────────────
+# 每行三个字段：<track>\t<app>\t<站点根目录下的相对路径>。建目录、扫包、清理、删
+# 残留都从这里取，shell 侧不再自己拼 `<track>/<app>`。
+SLOT_ROWS="$($NODE "$CLI" slot-paths)"
+
 # ── 1. 解析命令行 ────────────────────────────────────────────────────────────
 PRUNE_ONLY=false
 TRACK_VALUE=""
+APP_VALUE=""
 APK=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --prune-only) PRUNE_ONLY=true ;;
     --track)
-      [ "$#" -ge 2 ] || die "缺少 --track 的值；合法值：dev、uat、release。用法：./publish.sh --track dev|uat|release [APK 路径]"
+      [ "$#" -ge 2 ] || die "缺少 --track 的值；合法值：dev、uat、release。用法：./publish.sh --track dev|uat|release [--app adaa|uaeaa] [APK 路径]"
       TRACK_VALUE="$2"
       shift
       ;;
     --track=*) TRACK_VALUE="${1#*=}" ;;
+    --app)
+      [ "$#" -ge 2 ] || die "缺少 --app 的值；合法值：adaa、uaeaa。用法：./publish.sh --track dev|uat|release [--app adaa|uaeaa] [APK 路径]"
+      APP_VALUE="$2"
+      shift
+      ;;
+    --app=*) APP_VALUE="${1#*=}" ;;
     -*) die "未知参数：$1" ;;
     *) [ -z "$APK" ] || die "只能指定一个 APK 路径"; APK="$1" ;;
   esac
@@ -74,18 +95,40 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$PRUNE_ONLY" = true ] && [ -n "$TRACK_VALUE" ]; then
-  die "--prune-only 不接受 --track；用法：./publish.sh --prune-only"
+  die "--prune-only 不接受 --track（它清理所有槽位）；用法：./publish.sh --prune-only"
+fi
+if [ "$PRUNE_ONLY" = true ] && [ -n "$APP_VALUE" ]; then
+  die "--prune-only 不接受 --app（它清理所有槽位）；用法：./publish.sh --prune-only"
 fi
 
 if [ "$PRUNE_ONLY" = false ]; then
   TRACK="$(printf '%s' "$TRACK_VALUE" | $NODE "$CLI" track)"
+  APP="$(printf '%s' "$APP_VALUE" | $NODE "$CLI" app)"
+  SLOT_PATH="$($NODE "$CLI" app-path <<JSON
+{"track":"$TRACK","app":"$APP"}
+JSON
+)"
+  SLOT_DIR="$REMOTE_DIR/$SLOT_PATH"
+  # 下载页住在档位根目录（<track>/index.html），一页两组二维码；APK 才按槽位分目录。
   TRACK_DIR="$($NODE "$CLI" track-dir <<JSON
 {"remoteDir":"$REMOTE_DIR","track":"$TRACK"}
 JSON
 )"
 else
   TRACK=""
+  APP=""
+  SLOT_PATH=""
+  SLOT_DIR=""
   TRACK_DIR=""
+fi
+
+# 🔴 非缺省应用必须显式给 APK 路径。APK_DEFAULT_APK 指向的是缺省应用（adaa）的产物，
+# 让它给 uaeaa 兜底会把 ADAA 的包发到 UAEAA 的二维码下面——页面上两个码指向
+# 同一个身份，而没有任何东西会报错。
+DEFAULT_SLOT_APP="$($NODE "$CLI" default-app)"
+if [ "$PRUNE_ONLY" = false ] && [ "$APP" != "$DEFAULT_SLOT_APP" ] && [ -z "$APK" ]; then
+  die "--app $APP 必须显式传 APK 路径（缺省的 APK_DEFAULT_APK 是 $DEFAULT_SLOT_APP 的产物，不能拿来兜底）。
+用法：./publish.sh --track $TRACK --app $APP path/to/${APP}.apk"
 fi
 
 APK="${APK:-$DEFAULT_APK}"
@@ -107,7 +150,7 @@ read -r SIZE_BYTES BUILT_AT_MS <<<"$($NODE -e '
   const s = require("node:fs").statSync(process.argv[1]);
   console.log(s.size, Math.floor(s.mtimeMs));
 ' "$APK")"
-ok "$APK_LABEL $APK_VERSION_NAME (versionCode $APK_VERSION_CODE) · $((SIZE_BYTES / 1024 / 1024)) MB"
+ok "$APP · $APK_LABEL $APK_VERSION_NAME (versionCode $APK_VERSION_CODE) · $((SIZE_BYTES / 1024 / 1024)) MB"
 
 # ── 4. 读 git 信息（拿不到就不显示，不阻断发布）──────────────────────────────
 GIT_BRANCH=""; GIT_COMMIT=""; GIT_DIRTY=false
@@ -124,7 +167,7 @@ APK_NAME="$($NODE "$CLI" name <<JSON
 {"track":"$TRACK","label":"$APK_LABEL","versionName":"$APK_VERSION_NAME","versionCode":"$APK_VERSION_CODE","publishedAt":"$PUBLISHED_AT"}
 JSON
 )"
-APK_URL="$BASE_URL/$TRACK/$APK_NAME"
+APK_URL="$BASE_URL/$SLOT_PATH/$APK_NAME"
 
 # ── 6. 磁盘检查：留出两倍包大小的余量再传 ───────────────────────────────────
 step "检查服务器剩余空间"
@@ -139,32 +182,50 @@ ok "可用 $((AVAIL_KB / 1024)) MB"
 # 当上层以管道/重定向方式调用（yarn wrapper、CI）时 scp 完全静默，
 # 而 rsync --progress / --info=progress2 在非 TTY 下同样会持续吐进度行。
 # RSYNC_PROGRESS_FLAG 已在脚本启动阶段探测设置（见上方注释）。
-step "上传 $TRACK/$APK_NAME"
+step "上传 $SLOT_PATH/$APK_NAME"
 rsync -e "ssh -i \"$SSH_KEY\" -o BatchMode=yes -o LogLevel=ERROR" \
   "$RSYNC_PROGRESS_FLAG" \
-  "$APK" "$SSH_HOST:$TRACK_DIR/$APK_NAME.part"
-"${SSH[@]}" "$SSH_HOST" "mv -f '$TRACK_DIR/$APK_NAME.part' '$TRACK_DIR/$APK_NAME' && chmod 644 '$TRACK_DIR/$APK_NAME'"
+  "$APK" "$SSH_HOST:$SLOT_DIR/$APK_NAME.part"
+"${SSH[@]}" "$SSH_HOST" "mv -f '$SLOT_DIR/$APK_NAME.part' '$SLOT_DIR/$APK_NAME' && chmod 644 '$SLOT_DIR/$APK_NAME'"
 ok "上传完成"
 
-# ── 8. 生成并上传下载页 ─────────────────────────────────────────────────────
+# ── 8a. 扫同档位其它槽位：整页要把每个应用的二维码都渲染出来 ──────────────────
+# 本次只上传一个应用的包，但下载页是一页两组码。另一个应用的包不在本地、aapt2
+# 读不到，只能扫服务器目录取最新的那个，版本信息从文件名里读（拿不到构建时间，
+# 页面上会标明「信息取自文件名」）。扫不到就显示「尚未发布」——🚫 不猜。
+step "扫描 $TRACK 档各槽位现有的包"
+SLOTS_JSON=""
+SLOT_SEP=""
+while IFS=$'\t' read -r row_track slot_app slot_path; do
+  [ "$row_track" = "$TRACK" ] || continue
+  files="$("${SSH[@]}" "$SSH_HOST" "find '$REMOTE_DIR/$slot_path' -maxdepth 1 -name '*.apk' -printf '%f\t%s\t%T@\n'" 2>/dev/null || true)"
+  SLOTS_JSON="${SLOTS_JSON}${SLOT_SEP}\"$slot_app\":$(printf '%s' "$files" | $NODE "$CLI" apk-lines)"
+  SLOT_SEP=","
+done <<<"$SLOT_ROWS"
+
+# ── 8b. 生成并上传下载页 ────────────────────────────────────────────────────
 step "生成下载页"
 PAGE="$(mktemp -t apk-index)"
 trap 'rm -f "$PAGE"' EXIT
 $NODE "$CLI" render >"$PAGE" <<JSON
 {
   "track": "$TRACK",
-  "label": $($NODE -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$APK_LABEL"),
-  "versionName": "$APK_VERSION_NAME",
-  "versionCode": "$APK_VERSION_CODE",
-  "packageName": "$APK_PACKAGE",
-  "apkFileName": "$APK_NAME",
-  "apkUrl": "$APK_URL",
-  "sizeBytes": $SIZE_BYTES,
-  "builtAt": $BUILT_AT_MS,
-  "publishedAt": "$PUBLISHED_AT",
-  "gitBranch": $([ -n "$GIT_BRANCH" ] && printf '"%s"' "$GIT_BRANCH" || echo null),
-  "gitCommit": $([ -n "$GIT_COMMIT" ] && printf '"%s"' "$GIT_COMMIT" || echo null),
-  "gitDirty": $GIT_DIRTY
+  "base": $($NODE -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$BASE_URL"),
+  "published": {
+    "app": "$APP",
+    "label": $($NODE -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$APK_LABEL"),
+    "versionName": "$APK_VERSION_NAME",
+    "versionCode": "$APK_VERSION_CODE",
+    "packageName": "$APK_PACKAGE",
+    "apkFileName": "$APK_NAME",
+    "sizeBytes": $SIZE_BYTES,
+    "builtAt": $BUILT_AT_MS,
+    "publishedAt": "$PUBLISHED_AT",
+    "gitBranch": $([ -n "$GIT_BRANCH" ] && printf '"%s"' "$GIT_BRANCH" || echo null),
+    "gitCommit": $([ -n "$GIT_COMMIT" ] && printf '"%s"' "$GIT_COMMIT" || echo null),
+    "gitDirty": $GIT_DIRTY
+  },
+  "slots": {$SLOTS_JSON}
 }
 JSON
 "${SCP[@]}" "$PAGE" "$SSH_HOST:$TRACK_DIR/index.html.part"
@@ -175,22 +236,17 @@ JSON
 ok "下载页已更新"
 }
 
-# ── 清理：服务器上只留最近 $KEEP 个包 ───────────────────────────────────────
-prune_track() {
+# ── 清理：每个槽位（应用 × 档位）各自只留最近 $KEEP 个包 ──────────────────────
+# 按槽位清理很关键：ADAA 与 UAEAA 的发布节奏不同，如果共用一个保留池，
+# 发得勤的那一家会把发得少的那一家的包全删掉，页面上留一个指向 404 的二维码。
+prune_slot() {
 local track="$1"
-local dir="$REMOTE_DIR/$track"
-step "清理 $track 档旧版本（保留最近 $KEEP 个）"
-FILES_JSON="$("${SSH[@]}" "$SSH_HOST" \
-  "find '$dir' -maxdepth 1 -name '*.apk' -printf '%f\t%T@\n'" \
-  | $NODE -e '
-    const rows = require("node:fs").readFileSync(0, "utf8").trim().split("\n").filter(Boolean);
-    const files = rows.map((r) => {
-      const [name, t] = r.split("\t");
-      return { name, mtimeMs: Math.round(parseFloat(t) * 1000) };
-    });
-    console.log(JSON.stringify({ files, keep: Number(process.argv[1]), track: process.argv[2] }));
-  ' "$KEEP" "$track")"
-STALE="$(printf '%s' "$FILES_JSON" | $NODE "$CLI" stale)"
+local app="$2"
+local dir="$3"
+step "清理 $track · $app 槽位旧版本（保留最近 $KEEP 个）"
+FILES="$("${SSH[@]}" "$SSH_HOST" "find '$dir' -maxdepth 1 -name '*.apk' -printf '%f\t%s\t%T@\n'")"
+ROWS="$(printf '%s' "$FILES" | $NODE "$CLI" apk-lines)"
+STALE="$(printf '%s' "{\"files\":$ROWS,\"keep\":$KEEP,\"track\":\"$track\"}" | $NODE "$CLI" stale)"
 if [ -n "$STALE" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -203,12 +259,19 @@ fi
 }
 
 prune_old() {
-  while IFS= read -r track; do prune_track "$track"; done < <($NODE "$CLI" tracks)
+  while IFS=$'\t' read -r track app path; do
+    prune_slot "$track" "$app" "$REMOTE_DIR/$path"
+  done <<<"$SLOT_ROWS"
+}
+
+# 所有槽位目录，拼成一句远端 find/mkdir 的参数（单引号包住，路径里没有引号字符）。
+slot_dir_args() {
+  while IFS=$'\t' read -r _track _app path; do printf "'%s/%s' " "$REMOTE_DIR" "$path"; done <<<"$SLOT_ROWS"
 }
 
 ensure_site_structure() {
-  step "确保三档目录与入口页存在"
-  "${SSH[@]}" "$SSH_HOST" "mkdir -p '$REMOTE_DIR/dev' '$REMOTE_DIR/uat' '$REMOTE_DIR/release'"
+  step "确保各槽位目录与入口页存在"
+  "${SSH[@]}" "$SSH_HOST" "mkdir -p $(slot_dir_args)"
   while IFS= read -r track; do
     local placeholder
     placeholder="$(mktemp -t apk-placeholder)"
@@ -230,9 +293,8 @@ ensure_site_structure() {
 # 中断的上传会留下 .part 残骸。它们不匹配 *.apk，永远轮不到 prune_old 清理，
 # 会一直占着盘——这台机器就是被这类没人回收的东西写满过一次的。
 # 只删一小时前的，避免误伤另一个正在进行的上传。
-step "清理三档目录中的中断残留"
-TRACK_DIRS="$(while IFS= read -r track; do printf "'$REMOTE_DIR/%s' " "$track"; done < <($NODE "$CLI" tracks))"
-"${SSH[@]}" "$SSH_HOST" "find $TRACK_DIRS -maxdepth 1 -name '*.part' -mmin +60 -delete" || true
+step "清理各槽位目录中的中断残留"
+"${SSH[@]}" "$SSH_HOST" "find $(slot_dir_args) -maxdepth 1 -name '*.part' -mmin +60 -delete" || true
 
 ensure_site_structure
 

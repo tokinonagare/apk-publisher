@@ -14,10 +14,14 @@ import {
 
 /** 取自真实 app.config.ts 的结构（顶层 version + android 块内 versionCode，另有注释里的版本号干扰项）。 */
 const SAMPLE = `// 这条注释里有个 version 1.0.0，是干扰项，不能被读出来。
-const isDevVariant = process.env.APP_VARIANT === 'development'
+const BACKEND_VARIANTS = {
+  development: { package: 'ae.gov.adaa.unifiedportal.dev', name: 'Unified Portal (Dev)', host: '10.224.0.34' },
+  uat: { package: 'ae.gov.adaa.unifiedportal.uat', name: 'Unified Portal (UAT)', host: 'unified-uat.adaa.gov.ae' },
+  production: { package: 'ae.gov.adaa.unifiedportal', name: 'Unified Portal', host: 'unified.adaa.gov.ae' },
+}
 
 const config: ExpoConfig = {
-  name: isDevVariant ? 'Unified Portal (Dev)' : 'Unified Portal',
+  name: VARIANT.name,
   slug: 'unified-portal-app',
   version: '1.0.8',
   scheme: 'unifiedportal',
@@ -25,15 +29,18 @@ const config: ExpoConfig = {
     // 注释里的 versionCode 1 是干扰项（Expo 默认值 1 的说明文字）。
     // 当前显式值为 9，对应本次发布的 version 1.0.8。
     versionCode: 9,
-    package: isDevVariant ? 'ae.gov.adaa.unifiedportal.dev' : 'ae.gov.adaa.unifiedportal',
+    package: VARIANT.package,
   },
 };
 `;
 
-test('track → APP_VARIANT 映射：只有 dev 设 development，uat/release 不设走缺省交付包名', () => {
+test('track → APP_VARIANT 映射：三档都显式给值（app 仓 #348 起 uat 有自己的包名与 host）', () => {
   assert.equal(appVariantForTrack('dev'), 'development');
-  assert.equal(appVariantForTrack('uat'), undefined);
-  assert.equal(appVariantForTrack('release'), undefined);
+  assert.equal(appVariantForTrack('uat'), 'uat');
+  assert.equal(appVariantForTrack('release'), 'production');
+  // 🔴 回归守卫：本仓曾把 uat 映射成 undefined（不设变量 = 交付档），
+  // 于是 --track uat 构建出的是连生产 host 的交付包，页面上还不报错。
+  assert.notEqual(appVariantForTrack('uat'), appVariantForTrack('release'));
 });
 
 test('从源码文本读出 versionCode 与 version（注释里的干扰值不能被读出来）', () => {

@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildApkFileName, selectStaleApks, selectStaleApksForTrack, formatBytes, sanitizeSlug } from '../lib/naming.ts';
+import {
+  buildApkFileName,
+  parseApkFileName,
+  selectLatestApk,
+  selectStaleApks,
+  selectStaleApksForTrack,
+  formatBytes,
+  sanitizeSlug,
+} from '../lib/naming.ts';
 
 test('文件名带时间戳，保证每次发布唯一', () => {
   const at = new Date('2026-09-01T11:30:00+08:00');
@@ -63,3 +71,45 @@ test('按档清理时不会选中其它档的 APK', () => {
   ];
   assert.deepEqual(selectStaleApksForTrack(files, 'dev', 1), ['dev-b.apk']);
 });
+
+test('文件名可以读回来（发一个应用时，另一个应用的信息只能来自文件名）', () => {
+  const at = new Date('2026-09-01T11:30:00+08:00');
+  const name = buildApkFileName('dev', 'unified-portal-app', '1.0.16', '19', at);
+  const parsed = parseApkFileName(name, 'dev');
+  assert.ok(parsed);
+  assert.equal(parsed.label, 'unified-portal-app');
+  assert.equal(parsed.versionName, '1.0.16');
+  assert.equal(parsed.versionCode, '19');
+  // 时间戳按本地时区写入，也要按本地时区读回来，否则页面上的发布时间差一个时区。
+  assert.equal(parsed.publishedAt.getTime(), at.getTime());
+});
+
+test('解析从右端锚定：label 自己带连字符不会被切碎，档位前缀要被剥掉', () => {
+  const parsed = parseApkFileName('dev-unified-portal-app-1.0.16-19-20260901-1130.apk', 'dev');
+  assert.ok(parsed);
+  assert.equal(parsed.label, 'unified-portal-app');
+  assert.equal(parsed.versionName, '1.0.16');
+  assert.equal(parsed.versionCode, '19');
+});
+
+test('档位前缀对不上就不解析：uat 的包不该出现在 dev 页面上', () => {
+  assert.equal(parseApkFileName('uat-unified-portal-app-1.0.16-19-20260901-1130.apk', 'dev'), null);
+});
+
+test('不合规则的文件名返回 null 而不是猜一个版本号', () => {
+  assert.equal(parseApkFileName('dev-random.apk', 'dev'), null);
+  assert.equal(parseApkFileName('dev-app-1.0-20260901-1130.apk', 'dev'), null); // 缺 versionCode
+  assert.equal(parseApkFileName('dev-app-1-2-20260901-1130.apk', 'dev'), null); // versionName 没有点
+  assert.equal(parseApkFileName('dev-app-1.0-2-20260901.apk', 'dev'), null); // 缺时间段的后半
+});
+
+test('取最新包按 mtime，空列表返回 null', () => {
+  const files = [
+    { name: 'dev-old.apk', sizeBytes: 1, mtimeMs: 100 },
+    { name: 'dev-new.apk', sizeBytes: 2, mtimeMs: 300 },
+    { name: 'dev-mid.apk', sizeBytes: 3, mtimeMs: 200 },
+  ];
+  assert.equal(selectLatestApk(files)?.name, 'dev-new.apk');
+  assert.equal(selectLatestApk([]), null);
+});
+

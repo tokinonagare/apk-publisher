@@ -42,6 +42,61 @@ export function buildApkFileName(
   return `${parts.join('-')}.apk`;
 }
 
+export interface ParsedApkFileName {
+  label: string;
+  versionName: string;
+  versionCode: string;
+  /** 文件名里的发布时间戳，本地时区（与 timestamp() 对称）。 */
+  publishedAt: Date;
+}
+
+const NAME_PATTERN = /^(.+)-(\d+(?:\.\d+)+)-(\d+)-(\d{8})-(\d{4})\.apk$/;
+
+/**
+ * `buildApkFileName` 的逆运算：从文件名读回发布信息。
+ *
+ * 用在「只发一个应用、但整页要把另一个应用也显示出来」的时候——那个包不在本地，
+ * aapt2 读不到，只能靠文件名。锚点全部放在右端（时间戳 8+4 位、versionCode 纯数字、
+ * versionName 至少一个点），剩下的一律算 label，因为 label 自己就带连字符。
+ *
+ * 必须传 track：档位前缀要先剥掉，否则 label 会连 `dev-` 一起吃进来；而且
+ * 一个 `uat-...` 的文件出现在 dev 目录里时，它压根不该被解析成这一档的包。
+ * 解析不出来返回 null，由调用方决定降级显示还是硬失败。
+ */
+export function parseApkFileName(name: string, track: string): ParsedApkFileName | null {
+  const prefix = `${sanitizeSlug(track)}-`;
+  if (!name.startsWith(prefix)) return null;
+  const m = NAME_PATTERN.exec(name.slice(prefix.length));
+  if (!m) return null;
+  const [, label, versionName, versionCode, day, time] = m;
+  const publishedAt = new Date(
+    Number(day.slice(0, 4)),
+    Number(day.slice(4, 6)) - 1,
+    Number(day.slice(6, 8)),
+    Number(time.slice(0, 2)),
+    Number(time.slice(2, 4)),
+  );
+  return { label, versionName, versionCode, publishedAt };
+}
+
+/** 服务器上扫到的一行：文件名、字节数、修改时间（毫秒）。 */
+export interface ScannedApk {
+  name: string;
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+/**
+ * 取槽位里最新的那个包（另一个应用的二维码要用它）。
+ *
+ * 排序键用 mtimeMs，不用文件名的时间戳：文件名可以被手工放上去的包任意改写，
+ * mtime 才是「最后一次上传」的事实。同分秒时按名字倒序，保证结果可复现。
+ */
+export function selectLatestApk(files: readonly ScannedApk[]): ScannedApk | null {
+  if (files.length === 0) return null;
+  return [...files].sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name))[0];
+}
+
 /**
  * 选出该删的旧包：按修改时间倒序，留下最新的 `keep` 个，其余返回。
  *

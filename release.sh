@@ -10,8 +10,13 @@
 #   3. android.versionCode +1；传了 --version 就同时改顶层 version
 #   4. 只提交 app.config.ts 这一个文件（不 push）
 #   5. 按 track 设 APP_VARIANT 跑 npx expo prebuild --platform android
+#      （三档都显式设：development / uat / production，见 lib/release.ts 里那段来历）
 #   6. 在 android/ 下跑 ./gradlew assembleRelease
 #   7. 调本仓 ./publish.sh --track <同一个档> <刚构建出的 apk>
+#
+# 🔴 本脚本只构建缺省应用（ADAA）。app 仓现在还是单 flavor（TENANT 写死 'ADAA'，
+#    未知 APP_VARIANT 值直接 throw），所以 UAEAA 的包发不出去，走
+#    ./publish.sh --track <档> --app uaeaa <apk>；等 app 仓接上双 flavor 再给这里加 --app。
 #
 # 副作用说明：它会改 app 仓并产生一个本地 commit，但绝不 push。
 set -euo pipefail
@@ -69,12 +74,10 @@ if [ -n "$VERSION_ARG" ]; then NEW_VERSION="$VERSION_ARG"; else NEW_VERSION="$OL
 if [ "$DRY_RUN" = true ]; then
   step "dry-run：以下步骤均未执行"
   printf '  track: %s\n' "$TRACK"
-  if [ -n "$APP_VARIANT" ]; then printf '  APP_VARIANT: %s\n' "$APP_VARIANT";
-  else printf '  APP_VARIANT: （不设，走缺省交付包名）\n'; fi
+  printf '  APP_VARIANT: %s\n' "$APP_VARIANT"
   printf '  version: %s → %s\n' "$OLD_VERSION" "$NEW_VERSION"
   printf '  versionCode: %s → %s\n' "$OLD_CODE" "$NEW_CODE"
-  if [ -n "$APP_VARIANT" ]; then printf '  构建命令：APP_VARIANT=%s npx expo prebuild --platform android（cwd: <APP_REPO>）\n' "$APP_VARIANT";
-  else printf '  构建命令：npx expo prebuild --platform android（cwd: <APP_REPO>）\n'; fi
+  printf '  构建命令：APP_VARIANT=%s npx expo prebuild --platform android（cwd: <APP_REPO>）\n' "$APP_VARIANT"
   printf '  构建命令：./gradlew assembleRelease（cwd: <APP_REPO>/android）\n'
   printf '  发布命令：./publish.sh --track %s <APP_REPO>/%s\n' "$TRACK" "$APK_OUT"
   ok "dry-run 结束，app 仓未被修改"
@@ -118,11 +121,7 @@ ok "已提交（本地，未 push）：$COMMIT_MSG"
 
 # ── 5. prebuild（android/ 是 gitignored 产物，会被清空重建，这是预期的） ──────
 step "prebuild：npx expo prebuild --platform android"
-if [ -n "$APP_VARIANT" ]; then
-  (cd "$APP_REPO" && APP_VARIANT="$APP_VARIANT" npx expo prebuild --platform android)
-else
-  (cd "$APP_REPO" && npx expo prebuild --platform android)
-fi
+(cd "$APP_REPO" && APP_VARIANT="$APP_VARIANT" npx expo prebuild --platform android)
 ok "prebuild 完成"
 
 # ── 6. gradle 构建 ────────────────────────────────────────────────────────────

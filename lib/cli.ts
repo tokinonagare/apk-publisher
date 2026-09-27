@@ -8,9 +8,10 @@
 import { readFileSync } from 'node:fs';
 import QRCode from 'qrcode';
 import { parseBadging } from './apk-info.ts';
-import { buildApkFileName, selectStaleApksForTrack } from './naming.ts';
-import { renderEntryPage, renderPage, renderPlaceholderPage, type RenderInput } from './render.ts';
-import { parseTrack, trackDirectory, TRACKS } from './track.ts';
+import { APPS, appHrefPrefix, appPath, DEFAULT_APP, parseApp, type App } from './app.ts';
+import { buildApkFileName, parseApkFileName, selectLatestApk, selectStaleApksForTrack, type ScannedApk } from './naming.ts';
+import { renderEntryPage, renderPage, renderPlaceholderPage, type SlotApk, type SlotInput } from './render.ts';
+import { parseTrack, trackDirectory, TRACKS, type Track } from './track.ts';
 import {
   appVariantForTrack,
   bumpConfigText,
@@ -56,16 +57,66 @@ async function main(): Promise<void> {
       return;
     }
 
-    // 发布信息 JSON -> 完整的 index.html
+    // 档位发布信息 JSON -> 完整的 index.html（该档位下每个应用一组二维码）
+    //
+    // 输入：{track, base, published:{app,...真实元信息}, slots:{adaa:[{name,sizeBytes,mtimeMs}],...}}
+    // published 是本次上传的那个应用；其余应用从 slots 里挑最新的包，信息只能从文件名读。
     case 'render': {
       const raw = JSON.parse(readStdin());
-      const input: RenderInput = {
-        ...raw,
-        builtAt: new Date(raw.builtAt),
-        publishedAt: new Date(raw.publishedAt),
-        qrSvg: await qrSvg(raw.apkUrl),
-      };
-      process.stdout.write(renderPage(input));
+      const track: Track = parseTrack(raw.track);
+      const publishedApp: App = parseApp(raw.published?.app);
+      const base = String(raw.base).replace(/\/$/, '');
+      const apps: SlotInput[] = [];
+
+      for (const app of APPS) {
+        const urlBase = `${base}/${appPath(track, app)}`;
+        const href = (fileName: string) => `${appHrefPrefix(app)}${encodeURIComponent(fileName)}`;
+        if (app === publishedApp) {
+          const p = raw.published;
+          const apk: SlotApk = {
+            label: p.label,
+            versionName: p.versionName,
+            versionCode: p.versionCode,
+            packageName: p.packageName ?? undefined,
+            apkFileName: p.apkFileName,
+            apkUrl: `${urlBase}/${p.apkFileName}`,
+            apkHref: href(p.apkFileName),
+            sizeBytes: Number(p.sizeBytes),
+            builtAt: p.builtAt == null ? undefined : new Date(p.builtAt),
+            publishedAt: p.publishedAt == null ? undefined : new Date(p.publishedAt),
+            gitBranch: p.gitBranch ?? undefined,
+            gitCommit: p.gitCommit ?? undefined,
+            gitDirty: p.gitDirty === true,
+            derived: false,
+          };
+          apps.push({ app, apk, qrSvg: await qrSvg(apk.apkUrl) });
+          continue;
+        }
+
+        // 另一个应用不在本地，aapt2 读不到：取该槽位最新的包，从文件名里读版本。
+        // 文件名解析不出来（手工放上去的、命名不合规则的）就按「尚未发布」显示，
+        // 🚫 不猜——猜错的版本号比缺一个二维码更容易让人装错包。
+        const latest = selectLatestApk((raw.slots?.[app] ?? []) as ScannedApk[]);
+        const parsed = latest ? parseApkFileName(latest.name, track) : null;
+        if (!latest || !parsed) {
+          apps.push({ app, apk: null, qrSvg: '' });
+          continue;
+        }
+        const apk: SlotApk = {
+          label: parsed.label,
+          versionName: parsed.versionName,
+          versionCode: parsed.versionCode,
+          apkFileName: latest.name,
+          apkUrl: `${urlBase}/${latest.name}`,
+          apkHref: href(latest.name),
+          sizeBytes: latest.sizeBytes,
+          publishedAt: parsed.publishedAt,
+          derived: true,
+        };
+        apps.push({ app, apk, qrSvg: await qrSvg(apk.apkUrl) });
+      }
+
+      process.stdout.write(renderPage({ track, apps }));
       return;
     }
 
@@ -95,6 +146,54 @@ async function main(): Promise<void> {
       return;
     }
 
+    // 空输入 = 不传 --app，落缺省应用（缺省值只住在 lib/app.ts 一处，shell 不另写一份）。
+    case 'app': {
+      const value = readStdin().trim();
+      process.stdout.write((value === '' ? DEFAULT_APP : parseApp(value)) + '\n');
+      return;
+    }
+
+    case 'default-app': {
+      process.stdout.write(DEFAULT_APP + '\n');
+      return;
+    }
+
+    case 'apps': {
+      process.stdout.write(APPS.join('\n') + '\n');
+      return;
+    }
+
+    // {track,app} -> 该槽位在站点根目录下的相对路径（dev 或 dev/uaeaa）
+    case 'app-path': {
+      const r = JSON.parse(readStdin());
+      process.stdout.write(appPath(parseTrack(r.track), parseApp(r.app)) + '\n');
+      return;
+    }
+
+    // 全部槽位（档位 × 应用）：<track>\t<app>\t<站点根目录下的相对路径>
+    // shell 靠这一条拿到目录清单，不再自己拼路径规则。
+    case 'slot-paths': {
+      const rows: string[] = [];
+      for (const track of TRACKS) {
+        for (const app of APPS) rows.push([track, app, appPath(track, app)].join('\t'));
+      }
+      process.stdout.write(rows.join('\n') + '\n');
+      return;
+    }
+
+    // find -printf '%f\t%s\t%T@\n' 的输出 -> JSON 数组（一行一个 {name,sizeBytes,mtimeMs}）
+    case 'apk-lines': {
+      const rows = readStdin()
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => {
+          const [name, size, mtime] = line.split('\t');
+          return { name, sizeBytes: Number(size), mtimeMs: Math.round(parseFloat(mtime) * 1000) };
+        });
+      process.stdout.write(JSON.stringify(rows) + '\n');
+      return;
+    }
+
     // {label,versionName,versionCode,publishedAt} -> 目标文件名
     case 'name': {
       const r = JSON.parse(readStdin());
@@ -121,10 +220,10 @@ async function main(): Promise<void> {
     }
 
     // ── release.sh 侧助手 ──
-    // track -> APP_VARIANT。uat/release 不设，输出空行。
+    // track -> APP_VARIANT（三档都显式给值，见 lib/release.ts 里那段为什么不能缺省）。
     case 'app-variant': {
       const variant = appVariantForTrack(parseTrack(readStdin().trim()));
-      process.stdout.write((variant ?? '') + '\n');
+      process.stdout.write(variant + '\n');
       return;
     }
 

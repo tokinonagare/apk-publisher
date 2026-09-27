@@ -19,12 +19,21 @@ const TRACK_USAGE = './release.sh --track dev|uat|release [--version 1.0.9] [--d
 /**
  * track → APP_VARIANT 映射（本脚本的核心，写死）。
  *
- * dev 档产出 .dev 包；uat / release 不设 APP_VARIANT，走缺省的交付包名。
- * 缺省必须是 production：忘设时产出交付包名，而不是把 .dev 发给客户。
+ * app 仓 #348 起认三个值：`development` → `.dev` 包、`uat` → `.uat` 包、
+ * `production` → 交付包名；未知值在 app 仓的 resolveAppVariant 里直接 throw 中断
+ * prebuild，所以这里给错值会当场失败，不会静默发一个身份不对的包。
+ *
+ * 🔴 本仓原来把 uat 映射成「不设 APP_VARIANT」，那是 #348 之前只有两档时的事实。
+ * 沿用下来，`--track uat` 会 prebuild 出**交付包身份**（`ae.gov.adaa.unifiedportal`、
+ * 生产 host）的包并发到 UAT 档——测试人员装上后连的是生产环境，页面上还不报错。
+ *
+ * release 档显式传 `production`：不传虽然等价，但那依赖「缺省恰好是 production」这个
+ * 巧合，把意图写明白更好。
  */
-export function appVariantForTrack(track: Track): string | undefined {
+export function appVariantForTrack(track: Track): string {
   if (track === 'dev') return 'development';
-  return undefined;
+  if (track === 'uat') return 'uat';
+  return 'production';
 }
 
 /** 从 app.config.ts 源码文本里读出 android 块内的 versionCode。锚定在 android: 块内匹配，不硬编码行号。行首只允许空白（多行模式）——注释里的 versionCode: 数字不能被读出来。 */

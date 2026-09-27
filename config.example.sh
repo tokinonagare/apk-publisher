@@ -15,5 +15,7 @@ export APK_APP_REPO="$HOME/path/to/your-android-app"
 
 # 以下有默认值，按需覆盖
 # export APK_REMOTE_DIR="/var/www/apk-publisher"   # 服务器上的站点根目录
-# export APK_KEEP=3                                # 保留多少个历史包
+# export APK_KEEP=3                                # 每个槽位（应用 × 档位）保留多少个历史包
 # export APK_DEFAULT_APK="$APK_APP_REPO/android/app/build/outputs/apk/release/app-release.apk"
+#   ^ 只用于缺省应用 adaa。--app uaeaa 必须显式传 APK 路径，
+#     拿这份产物给 UAEAA 兜底会让页面上两个二维码指向同一个包。
