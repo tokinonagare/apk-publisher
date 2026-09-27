@@ -5,16 +5,19 @@
  * track 值域复用 lib/track.ts，不另写一份。
  */
 
+import { parseApp, type App, DEFAULT_APP } from './app.ts';
 import { parseTrack, type Track } from './track.ts';
 
 export interface ReleaseArgs {
   track: Track;
+  /** 发哪个应用；不传等于缺省应用（adaa），与 publish.sh 保持同一条缺省规则。 */
+  app: App;
   /** 传了 --version 才有，不传为 undefined（versionName 保持不动）。 */
   version?: string;
   dryRun: boolean;
 }
 
-const TRACK_USAGE = './release.sh --track dev|uat|release [--version 1.0.9] [--dry-run]';
+const TRACK_USAGE = './release.sh --track dev|uat|release [--app adaa|uaeaa] [--version 1.0.9] [--dry-run]';
 
 /**
  * track → APP_VARIANT 映射（本脚本的核心，写死）。
@@ -109,6 +112,7 @@ export function bumpConfigText(source: string, options: BumpOptions): string {
  */
 export function parseReleaseArgs(argv: readonly string[]): ReleaseArgs {
   let trackValue: string | undefined;
+  let appValue: string | undefined;
   let version: string | undefined;
   let dryRun = false;
   for (let i = 0; i < argv.length; i++) {
@@ -121,6 +125,14 @@ export function parseReleaseArgs(argv: readonly string[]): ReleaseArgs {
       i++;
     } else if (arg.startsWith('--track=')) {
       trackValue = arg.slice('--track='.length);
+    } else if (arg === '--app') {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith('-')) {
+        throw new Error(`缺少 --app 的值；合法值：adaa、uaeaa。用法：${TRACK_USAGE}`);
+      }
+      appValue = argv[i + 1];
+      i++;
+    } else if (arg.startsWith('--app=')) {
+      appValue = arg.slice('--app='.length);
     } else if (arg === '--version') {
       if (i + 1 >= argv.length || argv[i + 1].startsWith('-')) {
         throw new Error(`缺少 --version 的值。用法：${TRACK_USAGE}`);
@@ -139,13 +151,15 @@ export function parseReleaseArgs(argv: readonly string[]): ReleaseArgs {
     throw new Error(`缺少 --track，得显式传 dev、uat、release 其中之一。用法：${TRACK_USAGE}`);
   }
   const track = parseTrack(trackValue);
+  const app = appValue === undefined || appValue === '' ? DEFAULT_APP : parseApp(appValue);
   if (version !== undefined && version === '') throw new Error(`--version 不能为空。用法：${TRACK_USAGE}`);
-  return version === undefined ? { track, dryRun } : { track, version, dryRun };
+  return version === undefined ? { track, app, dryRun } : { track, app, version, dryRun };
 }
 
 /** 本地 commit 只包含 app.config.ts 一个文件，message 写清版本号变化（中文）。 */
 export function releaseCommitMessage(input: {
   track: Track;
+  app: App;
   oldVersion: string;
   newVersion: string;
   oldVersionCode: number;
@@ -155,8 +169,10 @@ export function releaseCommitMessage(input: {
     input.oldVersion === input.newVersion
       ? `version ${input.oldVersion} 保持不变`
       : `version ${input.oldVersion} → ${input.newVersion}`;
+  // 应用名一律写进 message：两个应用共用同一份 app.config.ts 与同一条 versionCode 计数器，
+  // 只写档位的话，事后没人能看出这次 +1 是谁的发版推上去的。
   return (
-    `发版（${input.track}）：versionCode ${input.oldVersionCode} → ${input.newVersionCode}，` +
+    `发版（${input.track} · ${input.app}）：versionCode ${input.oldVersionCode} → ${input.newVersionCode}，` +
     `${versionPart}`
   );
 }

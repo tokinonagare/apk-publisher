@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import QRCode from 'qrcode';
 import { parseBadging } from './apk-info.ts';
-import { APPS, appHrefPrefix, appPath, DEFAULT_APP, parseApp, type App } from './app.ts';
+import { APPS, apkIdentityMismatch, appHrefPrefix, appPath, DEFAULT_APP, parseApp, tenantEnvValue, type App } from './app.ts';
 import { buildApkFileName, parseApkFileName, selectLatestApk, selectStaleApksForTrack, type ScannedApk } from './naming.ts';
 import { renderEntryPage, renderPage, renderPlaceholderPage, type SlotApk, type SlotInput } from './render.ts';
 import { parseTrack, trackDirectory, TRACKS, type Track } from './track.ts';
@@ -155,6 +155,24 @@ async function main(): Promise<void> {
 
     case 'default-app': {
       process.stdout.write(DEFAULT_APP + '\n');
+      return;
+    }
+
+    // app -> app 仓的 APP_TENANT 取值（ADAA / UAEAA）
+    case 'app-tenant': {
+      process.stdout.write(tenantEnvValue(parseApp(readStdin().trim())) + '\n');
+      return;
+    }
+
+    // {packageName,app} -> 身份不符时输出那句可照着做的话并以非零退出
+    case 'check-identity': {
+      const r = JSON.parse(readStdin());
+      const mismatch = apkIdentityMismatch(String(r.packageName), parseApp(r.app));
+      if (mismatch) {
+        process.stdout.write(mismatch + '\n');
+        process.exitCode = 1;
+        return;
+      }
       return;
     }
 

@@ -44,8 +44,9 @@ nginx 直接当静态文件发。没有数据库、没有后端服务、没有�
 把构建那半也接上，一条命令走完全程：
 
 ```
-./release.sh --track dev              # Dev 档完整发版
-./release.sh --track uat --dry-run    # 只打印计划，不改任何东西
+./release.sh --track dev                    # Dev 档完整发版（缺省 --app adaa）
+./release.sh --track dev --app uaeaa        # 同一档，发 UAEAA 那份
+./release.sh --track uat --dry-run          # 只打印计划，不改任何东西
 ./release.sh --track release --version 1.0.9
 ```
 
@@ -55,18 +56,23 @@ nginx 直接当静态文件发。没有数据库、没有后端服务、没有�
 2. 检查 `app.config.ts` 必须干净，否则硬失败；其余文件允许 dirty
 3. `android.versionCode` +1；传了 `--version` 就同时改顶层 `version`
 4. 只提交 `app.config.ts` 这一个文件（**不 push**）
-5. 按 track 设 `APP_VARIANT` 跑 `npx expo prebuild --platform android`
-   （三档都显式设：`dev`→`development`、`uat`→`uat`、`release`→`production`）
+5. 按 track/app 设 `APP_VARIANT` 与 `APP_TENANT` 跑 `npx expo prebuild --platform android`
+   （`APP_VARIANT`：`dev`→`development`、`uat`→`uat`、`release`→`production`；
+   `APP_TENANT`：`adaa`→`ADAA`、`uaeaa`→`UAEAA`，app 仓 #387 起认这两个值）
 6. 在 `android/` 下跑 `./gradlew assembleRelease`
-7. 调 `./publish.sh --track <同一个档> <刚构建出的 apk>`
+7. 调 `./publish.sh --track <同一个档> --app <同一个应用> <刚构建出的 apk>`
 
 `--track` 必须显式传（`dev`、`uat`、`release`），同时支持 `--track=dev` 写法。
 `--dry-run` 打印将要执行的每一步与关键值，不改文件、不提交、不构建、不上传。
 
-> **`release.sh` 只构建 ADAA。** app 仓现在还是单 flavor（`src/config/env.ts` 里
-> `TENANT = 'ADAA'` 写死，`APP_VARIANT` 只认 `development`/`uat`/`production`，未知值
-> 直接 throw），所以 UAEAA 的包发不出、只能发布外部产好的（见下）。等 app 仓接上
-> 双 flavor，再给这里加 `--app`。
+> **两个应用共用一条 versionCode 计数器。** app 仓只有一份 `app.config.ts`、一个
+> `android.versionCode`，所以先发 ADAA 再发 UAEAA 时，UAEAA 拿到的是又 +1 之后的值，
+> 两家的版本号交错增长。这是现状，不是本脚本漏做。一次也只发一个应用：`android/`
+> 会被 prebuild 清空重建，两家的产物路径相同。
+
+> **`release.sh` 曾经只构建 ADAA。** 那句的前提是 app 仓单 flavor（`TENANT` 写死）；
+> #387（2026-09-27 合入 main）加了 `APP_TENANT=ADAA|UAEAA` 与 UAEAA 那套包名/host/
+> keystore，构建路径已经有了，所以这里接上了 `--app`。
 
 > **`uat` 档曾经不设 `APP_VARIANT`。** app 仓 #348 之前只有两档，UAT 与交付共用
 > 交付包名；#348 之后 `uat` 有自己的包名（`.uat`）与后端 host。映射没跟上时，
@@ -91,7 +97,7 @@ cp config.example.sh config.local.sh   # 填上服务器地址、密钥路径、
 
 `--track` 是必填项，只接受 `dev`、`uat`、`release`；缺少或传入其它值会以非零退出并报错，发布器不会从 APK、环境变量或应用名推断档位。
 
-`--app` 只接受 `adaa`、`uaeaa`，不传等于 `adaa`——app 仓的 `yarn publish:apk` 就不传它，缺省一变那条链路就会把 ADAA 的包发到 UAEAA 名下。`--app uaeaa` 必须显式给 APK 路径：`APK_DEFAULT_APK` 指向的是 ADAA 的产物，拿它兜底会让两个二维码指向同一个身份。`--prune-only` 不接受 `--track` 或 `--app`（它清理所有槽位）。
+`--app` 只接受 `adaa`、`uaeaa`，不传等于 `adaa`——app 仓的 `yarn publish:apk` 现在把它的 `--tenant` 直出成这里的 `--app`，缺省一变那条链路就会把 ADAA 的包发到 UAEAA 名下。`--app uaeaa` 走 `publish.sh` 时必须显式给 APK 路径：`APK_DEFAULT_APK` 指向的是 ADAA 的产物，拿它兜底会让两个二维码指向同一个包（要连构建一起走，用 `./release.sh --track dev --app uaeaa`）。`--prune-only` 不接受 `--track` 或 `--app`（它清理所有槽位）。
 
 档位与应用是两条正交的轴，一个「槽位」= 一个应用在一个档位下的位置：
 
@@ -146,6 +152,12 @@ cp config.example.sh config.local.sh   # 填上服务器地址、密钥路径、
 **槽位之间互不牵连。** 保留策略、清理、目录创建都按「应用 × 档位」逐个走，
 所以 UAEAA 只发过一次时不会被 ADAA 的三次发布挤掉，页面上不会留下一个指向 404 的二维码。
 
+**发错应用。** 上传前先核对 APK 的包名前缀（`ae.gov.adaa.*` / `ae.gov.uaeaa.*`）
+对不对得上 `--app`，不符就中止。这条守卫是应用轴带来的新失误面：把一个包的副本
+塞进另一个槽位，页面上就是「ADAA 的标题挂着 UAEAA 的二维码」，而装上之前没有任何
+东西报错。app 仓那条链路另有两道更前的门（`build.gradle` 的 applicationId 与包内
+`extra.backendHost` / `extra.tenant`），两仓各核各能拿到的那一段。
+
 **SELinux。** 见下。
 
 ## 服务器端一次性配置
@@ -193,7 +205,7 @@ npm run typecheck
 | `release.sh` | 编排：改版本号、提交（不 push）、prebuild、构建、调 publish.sh |
 | `lib/release.ts` | release.sh 的纯函数：档位→`APP_VARIANT` 映射、版本号读写与改写、参数解析 |
 | `lib/track.ts` | 档位这条轴：值域、目录、标签 |
-| `lib/app.ts` | 应用这条轴：值域、缺省应用、槽位路径（`dev` / `dev/uaeaa`） |
+| `lib/app.ts` | 应用这条轴：值域、缺省应用、槽位路径（`dev` / `dev/uaeaa`）、包名前缀守卫 |
 | `lib/apk-info.ts` | 解析 `aapt2 dump badging` 输出 |
 | `lib/naming.ts` | 文件命名与保留策略；文件名反解（另一侧应用的信息只能来自文件名） |
 | `lib/render.ts` | 生成下载页 HTML（一页多应用）与入口页、占位页 |

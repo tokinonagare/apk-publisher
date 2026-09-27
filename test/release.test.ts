@@ -96,23 +96,33 @@ test('--track 必须显式传：缺省与非法都硬失败', () => {
   assert.throws(() => parseReleaseArgs(['--wat', 'dev']), /未知参数/);
 });
 
-test('参数解析：两种 track 写法、--version 可选、--dry-run 可选', () => {
-  assert.deepEqual(parseReleaseArgs(['--track', 'dev']), { track: 'dev', dryRun: false });
-  assert.deepEqual(parseReleaseArgs(['--track=uat']), { track: 'uat', dryRun: false });
-  assert.deepEqual(parseReleaseArgs(['--track', 'release', '--version', '1.0.9']),
-    { track: 'release', version: '1.0.9', dryRun: false });
-  assert.deepEqual(parseReleaseArgs(['--track=dev', '--version=1.0.9', '--dry-run']),
-    { track: 'dev', version: '1.0.9', dryRun: true });
+test('--app 可选，缺省落 adaa；两种写法都支持，非法值硬失败', () => {
+  assert.equal(parseReleaseArgs(['--track', 'dev']).app, 'adaa');
+  assert.equal(parseReleaseArgs(['--track', 'dev', '--app', 'uaeaa']).app, 'uaeaa');
+  assert.equal(parseReleaseArgs(['--track=dev', '--app=uaeaa']).app, 'uaeaa');
+  assert.throws(() => parseReleaseArgs(['--track', 'dev', '--app', 'adaa3']), /adaa、uaeaa/);
+  assert.throws(() => parseReleaseArgs(['--track', 'dev', '--app']), /缺少 --app 的值/);
 });
 
-test('commit message 是中文且写清版本号变化', () => {
+test('参数解析：两种 track 写法、--version 可选、--dry-run 可选', () => {
+  assert.deepEqual(parseReleaseArgs(['--track', 'dev']), { track: 'dev', app: 'adaa', dryRun: false });
+  assert.deepEqual(parseReleaseArgs(['--track=uat']), { track: 'uat', app: 'adaa', dryRun: false });
+  assert.deepEqual(parseReleaseArgs(['--track', 'release', '--version', '1.0.9']),
+    { track: 'release', app: 'adaa', version: '1.0.9', dryRun: false });
+  assert.deepEqual(parseReleaseArgs(['--track=dev', '--version=1.0.9', '--dry-run']),
+    { track: 'dev', app: 'adaa', version: '1.0.9', dryRun: true });
+});
+
+test('commit message 是中文、写明是哪个应用推的计数器', () => {
   const msg = releaseCommitMessage({
-    track: 'dev', oldVersion: '1.0.8', newVersion: '1.0.8', oldVersionCode: 9, newVersionCode: 10,
+    track: 'dev', app: 'adaa', oldVersion: '1.0.8', newVersion: '1.0.8', oldVersionCode: 9, newVersionCode: 10,
   });
+  assert.match(msg, /发版（dev · adaa）/);
   assert.match(msg, /versionCode 9 → 10/);
   assert.match(msg, /保持不变/);
   const msg2 = releaseCommitMessage({
-    track: 'dev', oldVersion: '1.0.8', newVersion: '1.0.9', oldVersionCode: 9, newVersionCode: 10,
+    track: 'dev', app: 'uaeaa', oldVersion: '1.0.8', newVersion: '1.0.9', oldVersionCode: 9, newVersionCode: 10,
   });
+  assert.match(msg2, /发版（dev · uaeaa）/);
   assert.match(msg2, /version 1\.0\.8 → 1\.0\.9/);
 });

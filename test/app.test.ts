@@ -2,7 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { appHrefPrefix, appLabel, appPath, appPlaceholderNote, APPS, DEFAULT_APP, parseApp } from '../lib/app.ts';
+import {
+  apkIdentityMismatch,
+  appHrefPrefix,
+  appLabel,
+  appPath,
+  appPlaceholderNote,
+  APPS,
+  DEFAULT_APP,
+  packagePrefix,
+  parseApp,
+  tenantEnvValue,
+} from '../lib/app.ts';
 
 test('只接受 adaa、uaeaa 两个应用', () => {
   assert.equal(parseApp('adaa'), 'adaa');
@@ -37,6 +48,32 @@ test('下载链接前缀：缺省应用没有前缀，其它应用带自己那�
   assert.equal(appHrefPrefix('uaeaa'), 'uaeaa/');
 });
 
+test('包名前缀只到租户那一段，三档后缀都归 app 仓的表管', () => {
+  assert.equal(packagePrefix('adaa'), 'ae.gov.adaa.');
+  assert.equal(packagePrefix('uaeaa'), 'ae.gov.uaeaa.');
+});
+
+test('APP_TENANT 取值与 app 仓 #387 的租户表一致（大写，未知值在 app 仓会 throw）', () => {
+  assert.equal(tenantEnvValue('adaa'), 'ADAA');
+  assert.equal(tenantEnvValue('uaeaa'), 'UAEAA');
+});
+
+test('身份守卫：包名必须属于要发的那个应用', () => {
+  // 同档三种的包名都要放过——守卫只看租户那一段。
+  assert.equal(apkIdentityMismatch('ae.gov.adaa.unifiedportal', 'adaa'), null);
+  assert.equal(apkIdentityMismatch('ae.gov.adaa.unifiedportal.dev', 'adaa'), null);
+  assert.equal(apkIdentityMismatch('ae.gov.uaeaa.unifiedportal.uat', 'uaeaa'), null);
+  // 🔴 这一格是本次改动新引入的失误面：把 ADAA 的包发进 UAEAA 槽位，
+  // 页面上标题与二维码指向两家不同的后端，而装上之前没有任何东西报错。
+  const mismatch = apkIdentityMismatch('ae.gov.adaa.unifiedportal.dev', 'uaeaa');
+  assert.ok(mismatch);
+  assert.match(mismatch, /要发往 --app uaeaa/);
+  assert.match(mismatch, /它看起来是 adaa（ADAA）的包/);
+  const unknown = apkIdentityMismatch('com.example.other', 'adaa');
+  assert.ok(unknown);
+  assert.match(unknown, /不以 ae\.gov\.adaa\. 开头/);
+});
+
 test('占位提示按应用给出', () => {
   assert.equal(appPlaceholderNote('uaeaa'), 'UAEAA 尚未发布 APK。');
 });
@@ -51,6 +88,25 @@ test('CLI：不传 --app 时落缺省应用，传非法值硬失败', () => {
   assert.throws(() => run('nope', ['app']), /adaa、uaeaa/);
   assert.equal(run('', ['default-app']), DEFAULT_APP);
   assert.deepEqual(run('', ['apps']).split('\n'), [...APPS]);
+});
+
+test('CLI：check-identity 通过时静默退 0，不符时打出那句话并非零退出', () => {
+  const cli = fileURLToPath(new URL('../lib/cli.ts', import.meta.url));
+  const run = (input: string) => {
+    try {
+      const out = execFileSync(process.execPath, ['--experimental-strip-types', cli, 'check-identity'], {
+        input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { code: 0, out: out.trim() };
+    } catch (e) {
+      return { code: (e as { status?: number }).status ?? -1, out: ((e as { stdout?: string }).stdout ?? '').trim() };
+    }
+  };
+  const ok = run('{"packageName":"ae.gov.uaeaa.unifiedportal.dev","app":"uaeaa"}');
+  assert.deepEqual(ok, { code: 0, out: '' });
+  const bad = run('{"packageName":"ae.gov.adaa.unifiedportal","app":"uaeaa"}');
+  assert.equal(bad.code, 1);
+  assert.match(bad.out, /它看起来是 adaa（ADAA）的包/);
 });
 
 test('CLI：slot-paths 列出档位 × 应用的全部槽位', () => {

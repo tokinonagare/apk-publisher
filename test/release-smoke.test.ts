@@ -64,11 +64,36 @@ test(
     });
 
     assert.match(output, /track: dev/);
+    assert.match(output, /app: adaa/);
     assert.match(output, /APP_VARIANT: development/);
+    assert.match(output, /APP_TENANT: ADAA/);
     assert.match(output, new RegExp(`versionCode: ${current} → ${current + 1}`));
     assert.match(output, /未执行|未被修改/);
+    assert.match(output, /发布命令：\.\/publish\.sh --track dev --app adaa/);
 
     const after = appRepoStatus(repo);
     assert.equal(after, before, 'dry-run 必须真的什么都不改');
+  },
+);
+
+test(
+  'release.sh dry-run 带 --app uaeaa 时把租户与发布命令一起切到 UAEAA',
+  { timeout: 120000 },
+  (t) => {
+    if (!existsSync(CONFIG_LOCAL)) {
+      t.skip('没有 config.local.sh（CI/他人 clone），跳过冒烟测试');
+      return;
+    }
+    const repo = appRepo();
+    const before = appRepoStatus(repo);
+    const output = execFileSync('bash', [RELEASE_SH, '--track', 'dev', '--app', 'uaeaa', '--dry-run'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    assert.match(output, /app: uaeaa/);
+    assert.match(output, /APP_TENANT: UAEAA/);
+    assert.match(output, /APP_VARIANT=development APP_TENANT=UAEAA npx expo prebuild/);
+    assert.match(output, /发布命令：\.\/publish\.sh --track dev --app uaeaa/);
+    assert.equal(appRepoStatus(repo), before, 'dry-run 必须真的什么都不改');
   },
 );

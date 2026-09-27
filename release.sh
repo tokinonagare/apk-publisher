@@ -2,21 +2,23 @@
 #
 # 端到端发布：改版本号 → 提交 → prebuild → gradle 构建 → 调 publish.sh 发布。
 #
-#   ./release.sh --track dev|uat|release [--version 1.0.9] [--dry-run]
+#   ./release.sh --track dev|uat|release [--app adaa|uaeaa] [--version 1.0.9] [--dry-run]
 #
 # 七步（顺序固定）：
 #   1. 在 app 仓当前分支跑 git pull --rebase（不切分支）
 #   2. 检查 app.config.ts 必须干净，否则硬失败；其余文件允许 dirty
 #   3. android.versionCode +1；传了 --version 就同时改顶层 version
 #   4. 只提交 app.config.ts 这一个文件（不 push）
-#   5. 按 track 设 APP_VARIANT 跑 npx expo prebuild --platform android
-#      （三档都显式设：development / uat / production，见 lib/release.ts 里那段来历）
+#   5. 按 track/app 设 APP_VARIANT 与 APP_TENANT 跑 npx expo prebuild --platform android
+#      （APP_VARIANT 三档都显式设：development / uat / production；
+#        APP_TENANT 由 --app 给出：ADAA / UAEAA，app 仓 #387 起认这两个值，未知值 throw）
 #   6. 在 android/ 下跑 ./gradlew assembleRelease
-#   7. 调本仓 ./publish.sh --track <同一个档> <刚构建出的 apk>
+#   7. 调本仓 ./publish.sh --track <同一个档> --app <同一个应用> <刚构建出的 apk>
 #
-# 🔴 本脚本只构建缺省应用（ADAA）。app 仓现在还是单 flavor（TENANT 写死 'ADAA'，
-#    未知 APP_VARIANT 值直接 throw），所以 UAEAA 的包发不出去，走
-#    ./publish.sh --track <档> --app uaeaa <apk>；等 app 仓接上双 flavor 再给这里加 --app。
+# 🔴 两个应用共用同一份 app.config.ts，因此**共用同一条 versionCode 计数器**：
+#    先发 ADAA 再发 UAEAA，UAEAA 拿到的是 +1 之后的值，两家版本号会交错增长。
+#    这是现状（app 仓只有一个 android.versionCode 字段），不是本脚本漏做。
+#    一次只发一个应用：android/ 会被 prebuild 清空重建，产物路径两家相同。
 #
 # 副作用说明：它会改 app 仓并产生一个本地 commit，但绝不 push。
 set -euo pipefail
@@ -41,11 +43,13 @@ APK_OUT="android/app/build/outputs/apk/release/app-release.apk"
 
 # ── 0. 参数解析（判定逻辑在 lib/release.ts，shell 只取结果与退出码） ──────────
 ARGS_JSON="$($NODE -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@")"
-PARSED="$(printf '%s' "$ARGS_JSON" | $NODE "$CLI" release-args)" || die "参数错误（见上方 Node 报错）。用法：./release.sh --track dev|uat|release [--version 1.0.9] [--dry-run]"
+PARSED="$(printf '%s' "$ARGS_JSON" | $NODE "$CLI" release-args)" || die "参数错误（见上方 Node 报错）。用法：./release.sh --track dev|uat|release [--app adaa|uaeaa] [--version 1.0.9] [--dry-run]"
 TRACK="$($NODE -e 'console.log(JSON.parse(process.argv[1]).track)' "$PARSED")"
+APP="$($NODE -e 'console.log(JSON.parse(process.argv[1]).app)' "$PARSED")"
 VERSION_ARG="$($NODE -e 'const p=JSON.parse(process.argv[1]); console.log(p.version ?? "")' "$PARSED")"
 DRY_RUN="$($NODE -e 'console.log(JSON.parse(process.argv[1]).dryRun ? "true" : "false")' "$PARSED")"
 APP_VARIANT="$(printf '%s' "$TRACK" | $NODE "$CLI" app-variant)"
+APP_TENANT="$(printf '%s' "$APP" | $NODE "$CLI" app-tenant)"
 
 # ── 1. 当前分支 pull --rebase（不切分支） ─────────────────────────────────────
 BRANCH="$(git -C "$APP_REPO" rev-parse --abbrev-ref HEAD)"
@@ -74,12 +78,14 @@ if [ -n "$VERSION_ARG" ]; then NEW_VERSION="$VERSION_ARG"; else NEW_VERSION="$OL
 if [ "$DRY_RUN" = true ]; then
   step "dry-run：以下步骤均未执行"
   printf '  track: %s\n' "$TRACK"
+  printf '  app: %s\n' "$APP"
   printf '  APP_VARIANT: %s\n' "$APP_VARIANT"
+  printf '  APP_TENANT: %s\n' "$APP_TENANT"
   printf '  version: %s → %s\n' "$OLD_VERSION" "$NEW_VERSION"
   printf '  versionCode: %s → %s\n' "$OLD_CODE" "$NEW_CODE"
-  printf '  构建命令：APP_VARIANT=%s npx expo prebuild --platform android（cwd: <APP_REPO>）\n' "$APP_VARIANT"
+  printf '  构建命令：APP_VARIANT=%s APP_TENANT=%s npx expo prebuild --platform android（cwd: <APP_REPO>）\n' "$APP_VARIANT" "$APP_TENANT"
   printf '  构建命令：./gradlew assembleRelease（cwd: <APP_REPO>/android）\n'
-  printf '  发布命令：./publish.sh --track %s <APP_REPO>/%s\n' "$TRACK" "$APK_OUT"
+  printf '  发布命令：./publish.sh --track %s --app %s <APP_REPO>/%s\n' "$TRACK" "$APP" "$APK_OUT"
   ok "dry-run 结束，app 仓未被修改"
   exit 0
 fi
@@ -90,7 +96,7 @@ fi
 # 改了 app.config.ts，脚本察觉不到（分析所得，未实测复现）。正常情况下只有这个脚本
 # 会改这个文件；若多人同时在 app 仓操作，发版前请先口头对齐。
 # 中断恢复不做自动回滚：文件里的改动未必只有脚本写的那一行，自动回滚可能吞掉别人的改动。
-step "改版本号：versionCode $OLD_CODE → $NEW_CODE$([ "$NEW_VERSION" != "$OLD_VERSION" ] && echo "，version $OLD_VERSION → $NEW_VERSION")"
+step "改版本号（$APP）：versionCode $OLD_CODE → $NEW_CODE$([ "$NEW_VERSION" != "$OLD_VERSION" ] && echo "，version $OLD_VERSION → $NEW_VERSION")"
 BUMP_VERSION=""
 if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then BUMP_VERSION="$NEW_VERSION"; fi
 BUMP_JSON="$($NODE -e '
@@ -114,14 +120,14 @@ node -e 'const fs=require(\"node:fs\");console.log(JSON.stringify({source:fs.rea
 node -e 'const fs=require(\"node:fs\");console.log(JSON.stringify({source:fs.readFileSync(\"${APP_REPO}/${CONFIG_FILE}\",\"utf8\"),versionCode:${OLD_CODE},version:\"${OLD_VERSION}\"}))' | node --experimental-strip-types \"${CLI}\" bump-config > \"${APP_REPO}/${CONFIG_FILE}.tmp\" && mv \"${APP_REPO}/${CONFIG_FILE}.tmp\" \"${APP_REPO}/${CONFIG_FILE}\" && git -C \"${APP_REPO}\" diff --stat"
 ok "已改写并验证：version ${GOT_VERSION}，versionCode ${GOT_CODE}"
 
-COMMIT_JSON="$($NODE -e 'console.log(JSON.stringify({ track: process.argv[1], oldVersion: process.argv[2], newVersion: process.argv[3], oldVersionCode: Number(process.argv[4]), newVersionCode: Number(process.argv[5]) }))' "$TRACK" "$OLD_VERSION" "$NEW_VERSION" "$OLD_CODE" "$NEW_CODE")"
+COMMIT_JSON="$($NODE -e 'console.log(JSON.stringify({ track: process.argv[1], app: process.argv[2], oldVersion: process.argv[3], newVersion: process.argv[4], oldVersionCode: Number(process.argv[5]), newVersionCode: Number(process.argv[6]) }))' "$TRACK" "$APP" "$OLD_VERSION" "$NEW_VERSION" "$OLD_CODE" "$NEW_CODE")"
 COMMIT_MSG="$(printf '%s' "$COMMIT_JSON" | $NODE "$CLI" release-commit-message)"
 git -C "$APP_REPO" commit -m "$COMMIT_MSG" -- "$CONFIG_FILE"
 ok "已提交（本地，未 push）：$COMMIT_MSG"
 
 # ── 5. prebuild（android/ 是 gitignored 产物，会被清空重建，这是预期的） ──────
-step "prebuild：npx expo prebuild --platform android"
-(cd "$APP_REPO" && APP_VARIANT="$APP_VARIANT" npx expo prebuild --platform android)
+step "prebuild：APP_VARIANT=$APP_VARIANT APP_TENANT=$APP_TENANT npx expo prebuild --platform android"
+(cd "$APP_REPO" && APP_VARIANT="$APP_VARIANT" APP_TENANT="$APP_TENANT" npx expo prebuild --platform android)
 ok "prebuild 完成"
 
 # ── 6. gradle 构建 ────────────────────────────────────────────────────────────
@@ -131,6 +137,6 @@ APK_ABS="$APP_REPO/$APK_OUT"
 [ -f "$APK_ABS" ] || die "构建完成但找不到产物: $APK_ABS"
 ok "构建完成：$APK_ABS"
 
-# ── 7. 发布（同一个 track） ───────────────────────────────────────────────────
-step "发布：./publish.sh --track $TRACK"
-"$HERE/publish.sh" --track "$TRACK" "$APK_ABS"
+# ── 7. 发布（同一个 track · 同一个 app） ──────────────────────────────────────
+step "发布：./publish.sh --track $TRACK --app $APP"
+"$HERE/publish.sh" --track "$TRACK" --app "$APP" "$APK_ABS"

@@ -152,6 +152,14 @@ read -r SIZE_BYTES BUILT_AT_MS <<<"$($NODE -e '
 ' "$APK")"
 ok "$APP · $APK_LABEL $APK_VERSION_NAME (versionCode $APK_VERSION_CODE) · $((SIZE_BYTES / 1024 / 1024)) MB"
 
+# 🔴 身份守卫：包名必须属于要发的那个应用。
+# 上传之后才发现发错，页面上就是「ADAA 的标题挂着 UAEAA 的二维码」，
+# 而装上的人才会发现连的是另一家的后端。
+IDENT_ERR="$($NODE "$CLI" check-identity <<JSON
+{"packageName":"$APK_PACKAGE","app":"$APP"}
+JSON
+)" || die "$IDENT_ERR"
+
 # ── 4. 读 git 信息（拿不到就不显示，不阻断发布）──────────────────────────────
 GIT_BRANCH=""; GIT_COMMIT=""; GIT_DIRTY=false
 if git -C "$APP_REPO" rev-parse --git-dir >/dev/null 2>&1; then
