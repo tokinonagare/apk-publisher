@@ -142,11 +142,17 @@ export function renderPage(input: RenderInput): string {
   }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-    padding: 1.75rem 1.5rem; max-width: 26rem; width: 100%;
+    padding: 1.75rem 1.5rem; max-width: 42rem; width: 100%;
   }
   h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
   .badge { display: inline-block; background: var(--accent); color: var(--accent-fg); padding: .25rem .6rem; border-radius: 999px; font-weight: 700; font-size: .8rem; margin-bottom: .65rem; }
   .lead { color: var(--muted); font-size: .9rem; margin: 0 0 1.25rem; }
+  /* 应用一列一个，够宽就左右并排；窄屏（手机）自动退回上下——两列时每个码只剩
+     约 7rem，相机对不上焦，那种「并排」比不并排更难用。加第三个应用时不用改这里。 */
+  .apps {
+    display: grid; gap: 1rem 2rem;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
   .app { border-top: 1px solid var(--line); padding-top: 1.25rem; margin-top: 1.25rem; }
   .app h2 { font-size: 1rem; margin: 0 0 .5rem; display: flex; align-items: baseline; gap: .5rem; }
   .app-label { color: var(--muted); font-weight: 400; font-size: .82rem; }
@@ -180,7 +186,9 @@ export function renderPage(input: RenderInput): string {
   <h1>${escapeHtml(apps.map((a) => appLabel(a.app)).join(' / '))} 测试包下载</h1>
   <p class="lead">下面每个应用一个二维码，扫对应应用的那个。</p>
   <p class="warn">${escapeHtml(coexistence)}</p>
-${sections}  <footer>
+  <div class="apps">
+${sections}  </div>
+  <footer>
     安装前请在系统设置中允许「安装未知来源应用」。<br>
     若提示「应用未安装」，多为签名与已装版本冲突，卸载旧版后重试。
   </footer>

@@ -98,6 +98,18 @@ test('另一侧没有包时显示尚未发布，页面其余部分照常', () =>
   assert.ok(!html.includes('undefined'), '页面不得出现 undefined');
 });
 
+test('应用区块包在 .apps 网格里：够宽一左一右，窄屏自动退回上下', () => {
+  // 守的是布局本身：容器丢了会退回一上一下；minmax 丢了，手机上两个码并排后
+  // 每个只剩约 7rem，相机对不上焦。
+  const html = renderPage(BASE);
+  assert.match(html, /<div class="apps">\s*<section class="app">/);
+  assert.match(html, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(15rem, 1fr\)\)/);
+  assert.equal(html.split('<section class="app">').length - 1, 2);
+  // .apps 必须在最后一个 section 之后、footer 之前闭合（否则两个码会被推进页脚里）。
+  const lastSection = html.lastIndexOf('</section>');
+  assert.ok(html.indexOf('</div>', lastSection) < html.indexOf('<footer>'), '.apps 必须在 footer 前闭合');
+});
+
 test('页面显著显示档名', () => {
   assert.match(renderPage(BASE), />Dev</);
   assert.match(renderPage({ ...BASE, track: 'uat' }), />UAT</);
