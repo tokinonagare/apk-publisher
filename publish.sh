@@ -63,6 +63,11 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 把 config.example.sh 复制成 config.local.sh 并填写，或用环境变量提供。"
 fi
 
+# 🔴 站点基地址必须是个真域名：APK_BASE_URL 由 config.example.sh 复制而来时，
+# 忘改这一项会让每个二维码都指向 example.com，而发布过程一路 ✓、页面上不报错。
+# 放在任何远端动作之前——别等到页面都推上去了才说地址是假的。
+BASE_URL_ERR="$(printf '%s' "$BASE_URL" | $NODE "$CLI" check-base-url)" || die "$BASE_URL_ERR"
+
 # ── 槽位清单（档位 × 应用）：目录规则只在 lib/app.ts 里写一次 ──────────────────
 # 每行三个字段：<track>\t<app>\t<站点根目录下的相对路径>。建目录、扫包、清理、删
 # 残留都从这里取，shell 侧不再自己拼 `<track>/<app>`。

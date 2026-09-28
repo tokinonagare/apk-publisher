@@ -8,6 +8,8 @@ export APK_SSH_KEY="$HOME/.ssh/your-deploy-key"
 export APK_SSH_HOST="user@your-server.example.com"
 
 # 站点对外地址（下载页与二维码都用它拼直链）
+# 🔴 必须改：下面这个域名是 RFC 2606 保留的示例值，留着它 publish.sh / release.sh
+#    会在动手之前直接报错退出（否则每个二维码都指向一个解析不了的域名，而页面不报错）。
 export APK_BASE_URL="https://apk.example.com"
 
 # app 源码仓库路径，用来读 git 分支/commit 显示在下载页上

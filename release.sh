@@ -28,6 +28,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/config.local.sh" ] && . "$HERE/config.local.sh"
 
 APP_REPO="${APK_APP_REPO:-}"
+BASE_URL="${APK_BASE_URL:-}"
 
 die() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\033[36m▸\033[0m %s\n' "$*"; }
@@ -40,6 +41,10 @@ APK_OUT="android/app/build/outputs/apk/release/app-release.apk"
 
 [ -n "$APP_REPO" ] || die "缺少配置：APK_APP_REPO。把 config.example.sh 复制成 config.local.sh 并填写，或用环境变量提供。"
 [ -d "$APP_REPO" ] || die "app 仓路径不存在: $APP_REPO"
+
+# 🔴 先验站点基地址再动手：这条链路要十几分钟构建，别在产物都出来了之后才由
+# publish.sh 说「二维码的地址是 example.com」。
+BASE_URL_ERR="$(printf '%s' "$BASE_URL" | $NODE "$CLI" check-base-url)" || die "$BASE_URL_ERR"
 
 # ── 0. 参数解析（判定逻辑在 lib/release.ts，shell 只取结果与退出码） ──────────
 ARGS_JSON="$($NODE -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@")"

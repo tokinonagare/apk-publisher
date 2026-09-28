@@ -160,6 +160,11 @@ cp config.example.sh config.local.sh   # 填上服务器地址、密钥路径、
 
 **SELinux。** 见下。
 
+**假域名。** `APK_BASE_URL` 留着 `config.example.sh` 里的示例值（`apk.example.com`）时，
+`publish.sh` 与 `release.sh` 都在**动手之前**报错退出。以前不会：包照样传上去、页面照样
+生成、每一步都是 ✓，只是每个二维码都指向一个 RFC 2606 永久保留、永远解析不到的域名。
+`release.sh` 那道尤其值钱——它排在十几分钟的构建之前。
+
 ## 服务器端一次性配置
 
 ```bash
@@ -207,6 +212,7 @@ npm run typecheck
 | `lib/track.ts` | 档位这条轴：值域、目录、标签 |
 | `lib/app.ts` | 应用这条轴：值域、缺省应用、槽位路径（`dev` / `dev/uaeaa`）、包名前缀守卫 |
 | `lib/apk-info.ts` | 解析 `aapt2 dump badging` 输出 |
+| `lib/config.ts` | 配置值校验（站点基地址能不能拼出可用的二维码） |
 | `lib/naming.ts` | 文件命名与保留策略；文件名反解（另一侧应用的信息只能来自文件名） |
 | `lib/render.ts` | 生成下载页 HTML（一页多应用）与入口页、占位页 |
 | `lib/cli.ts` | 上面几个模块的命令行入口，供 `publish.sh` 调用 |

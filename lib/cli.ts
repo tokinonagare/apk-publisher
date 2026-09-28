@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import QRCode from 'qrcode';
 import { parseBadging } from './apk-info.ts';
 import { APPS, apkIdentityMismatch, appHrefPrefix, appPath, DEFAULT_APP, parseApp, tenantEnvValue, type App } from './app.ts';
+import { baseUrlProblem } from './config.ts';
 import { buildApkFileName, parseApkFileName, selectLatestApk, selectStaleApksForTrack, type ScannedApk } from './naming.ts';
 import { renderEntryPage, renderPage, renderPlaceholderPage, type SlotApk, type SlotInput } from './render.ts';
 import { parseTrack, trackDirectory, TRACKS, type Track } from './track.ts';
@@ -155,6 +156,17 @@ async function main(): Promise<void> {
 
     case 'default-app': {
       process.stdout.write(DEFAULT_APP + '\n');
+      return;
+    }
+
+    // stdin 是 APK_BASE_URL -> 不可用时输出那句可照着改的话并非零退出
+    case 'check-base-url': {
+      const problem = baseUrlProblem(readStdin().trim());
+      if (problem) {
+        process.stdout.write(problem + '\n');
+        process.exitCode = 1;
+        return;
+      }
       return;
     }
 
